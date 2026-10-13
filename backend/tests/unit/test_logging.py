@@ -1,13 +1,32 @@
-"""结构化日志：JSON 输出、trace_id / interview_id 上下文、脱敏。"""
+"""结构化日志：JSON 输出、取自 OpenTelemetry 的 trace_id / span_id、interview_id 上下文、脱敏。"""
 
 import asyncio
 import io
 import json
+from collections.abc import Generator
 from typing import Any
 
+import pytest
 import structlog
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+from opentelemetry.trace import format_span_id, format_trace_id
 
-from interview.logging import configure_logging, log_context, new_trace_id, redact
+from interview.config import ObservabilitySettings
+from interview.logging import configure_logging, log_context, redact
+from interview.observability.tracing import init_tracing, shutdown_tracing, span
+
+
+@pytest.fixture(autouse=True, params=[True, False], ids=["tracing-on", "tracing-off"])
+def tracing(request: pytest.FixtureRequest) -> Generator[None]:
+    """开启和关闭可观测性时，日志里的 trace_id 行为一致。"""
+    init_tracing(
+        "api",
+        ObservabilitySettings(enabled=request.param),
+        exporter=InMemorySpanExporter(),
+        set_global=False,
+    )
+    yield
+    shutdown_tracing()
 
 
 def capture() -> io.StringIO:
@@ -20,32 +39,41 @@ def lines(stream: io.StringIO) -> list[dict[str, Any]]:
     return [json.loads(line) for line in stream.getvalue().splitlines()]
 
 
-def test_json_output_has_trace_and_interview_id() -> None:
+def test_json_output_has_otel_ids_and_interview_id() -> None:
     stream = capture()
-    with log_context(interview_id="iv-1") as trace_id:
+    with span("turn") as current, log_context(interview_id="iv-1"):
         structlog.get_logger().info("turn_started", seq=3)
     structlog.get_logger().info("outside")
 
     inside, outside = lines(stream)
+    ctx = current.get_span_context()
     assert inside["event"] == "turn_started"
-    assert inside["trace_id"] == trace_id
+    assert inside["trace_id"] == format_trace_id(ctx.trace_id)
+    assert inside["span_id"] == format_span_id(ctx.span_id)
+    assert len(inside["trace_id"]) == 32
     assert inside["interview_id"] == "iv-1"
     assert inside["level"] == "info"
     assert "timestamp" in inside
     assert "trace_id" not in outside
+    assert "span_id" not in outside
 
 
-def test_nested_context_inherits_trace_id() -> None:
-    capture()
-    with log_context(trace_id="outer") as outer, log_context(interview_id="iv-2") as inner:
-        assert inner == outer == "outer"
+def test_child_span_shares_trace_id() -> None:
+    stream = capture()
+    with span("parent"):
+        structlog.get_logger().info("a")
+        with span("child"):
+            structlog.get_logger().info("b")
+    a, b = lines(stream)
+    assert a["trace_id"] == b["trace_id"]
+    assert a["span_id"] != b["span_id"]
 
 
 def test_context_is_isolated_between_tasks() -> None:
     stream = capture()
 
     async def worker(interview_id: str) -> None:
-        with log_context(interview_id=interview_id):
+        with span(interview_id), log_context(interview_id=interview_id):
             await asyncio.sleep(0)
             structlog.get_logger().info("tick")
 
@@ -56,13 +84,6 @@ def test_context_is_isolated_between_tasks() -> None:
     records = lines(stream)
     assert {r["interview_id"] for r in records} == {"a", "b"}
     assert records[0]["trace_id"] != records[1]["trace_id"]
-
-
-def test_new_trace_id_format() -> None:
-    tid = new_trace_id()
-    assert len(tid) == 32
-    int(tid, 16)
-    assert tid != new_trace_id()
 
 
 def test_redaction_in_output() -> None:
@@ -110,11 +131,11 @@ def test_redact_processor_directly() -> None:
 def test_console_format_renders() -> None:
     stream = io.StringIO()
     configure_logging(fmt="console", stream=stream)
-    with log_context(trace_id="abc"):
+    with span("x") as current:
         structlog.get_logger().info("hello", api_key="sk-789")
     text = stream.getvalue()
     assert "hello" in text
-    assert "abc" in text
+    assert format_trace_id(current.get_span_context().trace_id) in text
     assert "sk-789" not in text
 
 

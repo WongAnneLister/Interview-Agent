@@ -106,6 +106,29 @@ class TTSSettings(_ProviderRoleSettings):
     model_config = _config("TTS_")
 
 
+class ObservabilitySettings(BaseSettings):
+    """链路追踪与指标的总开关。关闭时所有埋点工具都是空操作，不影响业务。"""
+
+    model_config = _config("OBSERVABILITY_")
+
+    enabled: bool = False
+    sample_ratio: float = Field(default=1.0, ge=0.0, le=1.0)  # 按 trace 采样的比例
+
+
+class LangfuseSettings(BaseSettings):
+    """自部署 Langfuse（OTLP 接收端）。OBSERVABILITY_ENABLED=true 时三项必填。"""
+
+    model_config = _config("LANGFUSE_")
+
+    host: str = ""
+    public_key: str = ""
+    secret_key: SecretStr = SecretStr("")
+
+    @property
+    def configured(self) -> bool:
+        return bool(self.host and self.public_key and self.secret_key.get_secret_value())
+
+
 class ProvidersSettings(BaseModel):
     llm_front: LLMFrontSettings
     llm_eval: LLMEvalSettings
@@ -121,6 +144,8 @@ class Settings(BaseModel):
     livekit: LiveKitSettings
     s3: S3Settings
     providers: ProvidersSettings
+    observability: ObservabilitySettings
+    langfuse: LangfuseSettings
 
 
 def _load[T: BaseSettings](cls: type[T], env_file: Path | None, missing: list[str]) -> T:
@@ -148,6 +173,13 @@ def load_settings(env_file: Path | None = DEFAULT_ENV_FILE) -> Settings:
     llm_fallback = _load(LLMFallbackSettings, env_file, errors)
     stt = _load(STTSettings, env_file, errors)
     tts = _load(TTSSettings, env_file, errors)
+    observability = _load(ObservabilitySettings, env_file, errors)
+    langfuse = _load(LangfuseSettings, env_file, errors)
+    if observability.enabled and not langfuse.configured:
+        errors.append(
+            "LANGFUSE_HOST / LANGFUSE_PUBLIC_KEY / LANGFUSE_SECRET_KEY"
+            "（OBSERVABILITY_ENABLED=true 时必填）"
+        )
     if errors:
         raise ConfigError("配置缺失或无效（见 .env.example）：\n  " + "\n  ".join(errors))
     return Settings(
@@ -163,6 +195,8 @@ def load_settings(env_file: Path | None = DEFAULT_ENV_FILE) -> Settings:
             stt=stt,
             tts=tts,
         ),
+        observability=observability,
+        langfuse=langfuse,
     )
 
 
