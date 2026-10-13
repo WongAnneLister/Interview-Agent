@@ -34,3 +34,6 @@ docs/research/
 .idea/
 .DS_Store
 Thumbs.db
+
+# 本机工具（如 LiveKit Server 可执行文件），由 scripts/fetch-*.sh 下载
+.tools/

@@ -1,0 +1,21 @@
+# 抓取目标都在 VPS 的 127.0.0.1 上：
+# 本机的 API 和语音 worker 通过 scripts/tunnel.sh 的反向隧道（ssh -R）转发到这些端口。
+# 隧道没开时目标显示为 down，属于正常现象。
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ["127.0.0.1:29090"]
+
+  - job_name: interview-api
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["127.0.0.1:29464"]
+
+  - job_name: interview-worker
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["127.0.0.1:29465"]

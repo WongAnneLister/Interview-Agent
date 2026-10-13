@@ -5,7 +5,8 @@
 BACKEND := backend
 UV := uv run --directory $(BACKEND)
 
-.PHONY: help install fmt lint typecheck test check test-live hooks
+.PHONY: help install fmt lint typecheck test check test-live hooks \
+	vps-deploy vps-env vps-ps vps-logs tunnel check-env fetch-livekit livekit
 
 help:
 	@echo "install    安装依赖并安装 git hooks"
@@ -15,6 +16,14 @@ help:
 	@echo "test       单元测试（不含 live 测试）"
 	@echo "check      lint + typecheck + test（合并前必须通过）"
 	@echo "test-live  调用真实厂商的测试（需要 .env，手动运行）"
+	@echo "vps-deploy 部署 / 更新 VPS 上的开发依赖（可重复执行）"
+	@echo "vps-env    把 VPS 上生成的连接信息写入本机 .env（不显示密码）"
+	@echo "vps-ps     查看 VPS 上依赖容器的状态"
+	@echo "vps-logs   查看 VPS 上依赖容器的日志（service=postgres 指定服务）"
+	@echo "tunnel     建立到 VPS 的 SSH 隧道（开发时保持运行）"
+	@echo "check-env  检查各依赖是否可用（需要隧道已建立）"
+	@echo "fetch-livekit 下载并校验本机 LiveKit Server（官方 release）"
+	@echo "livekit    在本机启动 LiveKit Server（前台运行）"
 
 install:
 	uv sync --directory $(BACKEND)
@@ -41,3 +50,27 @@ check: lint typecheck test
 
 test-live:
 	$(UV) pytest -m live
+
+vps-deploy:
+	bash scripts/vps-deploy.sh
+
+vps-env:
+	bash scripts/vps-env.sh
+
+vps-ps:
+	bash -c 'source scripts/_lib.sh && vps_ssh "cd $$VPS_DIR && docker compose ps"'
+
+vps-logs:
+	bash -c 'source scripts/_lib.sh && vps_ssh "cd $$VPS_DIR && docker compose logs --tail=100 $(service)"'
+
+tunnel:
+	bash scripts/tunnel.sh
+
+check-env:
+	python scripts/check_env.py
+
+fetch-livekit:
+	bash scripts/fetch-livekit.sh
+
+livekit:
+	bash scripts/livekit.sh

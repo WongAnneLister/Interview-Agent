@@ -31,15 +31,17 @@
 | 前端 | Next.js（App Router、TypeScript）、pnpm、Tailwind、livekit-client、@livekit/components-react |
 | 模型厂商 | 阿里云百炼（大模型、流式识别、流式合成）；DeepSeek 备用大模型 |
 | 可观测性 | OpenTelemetry（统一埋点）；Langfuse 自部署（大模型与 agent 链路、成本、评测分数、提示词版本对比）；Prometheus + Grafana（语音时序指标与系统指标）；自建最小用量表（预算保护，v1 计费以此为准） |
-| 本地运行 | Docker Compose：PostgreSQL、Redis、LiveKit Server（dev 模式）、MinIO、Langfuse、Prometheus、Grafana |
+| 开发依赖 | VPS 上的 Docker Compose（deploy/vps/）：PostgreSQL、Redis、S3 兼容对象存储（SeaweedFS）、Prometheus、Grafana，只绑定 127.0.0.1，本机经 SSH 隧道访问（make tunnel）；LiveKit Server 在本机以官方原生程序运行（make fetch-livekit / make livekit，配置 deploy/local/livekit.yaml）；Langfuse 的部署位置在 PR-04b 确定 |
 | 质量 | ruff（格式 + lint）、pyright（src 严格模式）、pytest + pytest-asyncio、ESLint + tsc、pre-commit、GitHub Actions |
 
 ### 目录结构
 
 ```text
 Interview-Agent/
-  CLAUDE.md  Makefile  docker-compose.yml  .env.example  README.md
-  observability/     prometheus.yml  grafana/（数据源与看板 JSON）
+  CLAUDE.md  Makefile  .env.example  README.md
+  deploy/vps/        VPS 上开发依赖的 docker-compose、prometheus.yml、grafana/
+  deploy/local/      本机运行的服务配置（livekit.yaml）
+  scripts/           vps-deploy.sh  vps-env.sh  tunnel.sh  check_env.py  fetch-livekit.sh  livekit.sh
   backend/
     pyproject.toml
     src/interview/
@@ -52,7 +54,7 @@ Interview-Agent/
                      interviewer.py  orchestrator.py  report.py
       api/           app.py  deps.py  routes/
       voice/         worker.py  stt_plugin.py  tts_plugin.py  turn_policy.py  events.py
-      storage/       base.py  minio.py
+      storage/       base.py  s3.py（S3 兼容接口，开发用 SeaweedFS，生产可换 OSS）
     config/          pricing.yaml（各型号单价，带生效日期）
     tests/           unit/  live/
     evals/           personas/  fixtures/  run.py
@@ -66,6 +68,7 @@ Interview-Agent/
 - 全部函数带类型注解；`src/` 通过 pyright 严格模式。
 - 所有 IO 用 async；每个网络调用必须有超时。
 - 业务代码只通过 `providers/` 的接口调用厂商，不直接 import 厂商 SDK。
+- 对象存储只用标准 S3 API（如 aioboto3），不使用任何存储产品专有的 SDK。
 - 所有配置与密钥走环境变量（`config.py` 统一读取），代码里不写死型号和地址。
 - 每张业务表都有 `user_id`，每个查询都按 `user_id` 过滤（v0 只有一个种子用户）。
 - 提示词放在 `prompts/*.md`，文件头写版本号；以 git 为准，Langfuse 只记录版本号，不用它做提示词主存储。

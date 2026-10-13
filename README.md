@@ -28,6 +28,30 @@ uv run --directory backend pyright
 uv run --directory backend pytest
 ```
 
+## 开发依赖（部署在 VPS 上）
+
+Postgres、Redis、S3 兼容对象存储（SeaweedFS）、Prometheus、Grafana 运行在 VPS 的 Docker 中，端口只绑定在服务器的 127.0.0.1 上，本机通过 SSH 隧道访问。需要先在 `.env` 中填好 `VPS_HOST / VPS_PORT / VPS_USER`，并配置好 SSH 密钥免密登录。
+
+```bash
+make vps-deploy   # 部署或更新 VPS 上的依赖（首次会在服务器上随机生成密码）
+make vps-env      # 把连接信息写入本机 .env（不显示密码）
+make tunnel       # 建立 SSH 隧道，开发时保持运行
+make check-env    # 检查各依赖是否可用
+```
+
+隧道建立后：Postgres `127.0.0.1:25432`，Redis `:26379`，S3 `http://127.0.0.1:29000`（文件浏览 `http://127.0.0.1:29001`），Prometheus `http://127.0.0.1:29090`，Grafana `http://127.0.0.1:23000`（用户 admin，密码见 `.env` 中的 `GRAFANA_ADMIN_PASSWORD`）。
+
+### LiveKit（本机运行）
+
+LiveKit Server 以官方 Windows 原生程序运行在本机（浏览器、语音 worker 都在本机，媒体不出本机）。
+
+```bash
+make fetch-livekit   # 下载官方 release 并校验 SHA-256，放到 .tools/livekit/
+make livekit         # 启动（前台运行）；首次会生成 LIVEKIT_API_KEY / SECRET 写入 .env
+```
+
+信令地址 `ws://127.0.0.1:7880`。媒体 UDP 端口 7882 绑定在局域网 IP 上（WebRTC 不使用回环地址做 ICE 候选），Windows 防火墙首次可能弹窗，选“专用网络”即可；没有 token 无法加入房间。
+
 ## 配置
 
 复制 `.env.example` 为 `.env` 后按注释填写。`.env` 包含密钥，不能提交（pre-commit 会拦截）。
