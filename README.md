@@ -28,6 +28,19 @@ uv run --directory backend pyright
 uv run --directory backend pytest
 ```
 
+## 开发依赖（部署在 VPS 上）
+
+Postgres、Redis、S3 兼容对象存储（SeaweedFS）、Prometheus、Grafana 运行在 VPS 的 Docker 中，端口只绑定在服务器的 127.0.0.1 上，本机通过 SSH 隧道访问。需要先在 `.env` 中填好 `VPS_HOST / VPS_PORT / VPS_USER`，并配置好 SSH 密钥免密登录。
+
+```bash
+make vps-deploy   # 部署或更新 VPS 上的依赖（首次会在服务器上随机生成密码）
+make vps-env      # 把连接信息写入本机 .env（不显示密码）
+make tunnel       # 建立 SSH 隧道，开发时保持运行
+make check-env    # 检查各依赖是否可用
+```
+
+隧道建立后：Postgres `127.0.0.1:25432`，Redis `:26379`，S3 `http://127.0.0.1:29000`（文件浏览 `http://127.0.0.1:29001`），Prometheus `http://127.0.0.1:29090`，Grafana `http://127.0.0.1:23000`（用户 admin，密码见 `.env` 中的 `GRAFANA_ADMIN_PASSWORD`）。
+
 ## 配置
 
 复制 `.env.example` 为 `.env` 后按注释填写。`.env` 包含密钥，不能提交（pre-commit 会拦截）。
