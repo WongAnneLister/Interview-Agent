@@ -1,0 +1,92 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+# 同一分支上新的推送会取消还在跑的旧任务
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: backend (lint, typecheck, test)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # setup-uv 从 v8 起不再发布 v10 这类主版本标签，按提交 SHA 固定
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+
+      - name: Install dependencies
+        run: uv sync --directory backend --locked
+
+      - name: Lint
+        run: make lint
+
+      - name: Typecheck
+        run: make typecheck
+
+      # live 测试永远不在 CI 里跑：pytest 默认 -m 'not live'，
+      # 且 backend/tests/conftest.py 在 CI=true 时会强制跳过 live 标记的测试。
+      # 本工作流也不注入任何厂商密钥。
+      - name: Test
+        run: make test
+
+  frontend:
+    name: frontend (lint, typecheck, test)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # web/package.json 在 PR-23 才会出现，在此之前下面的步骤全部跳过
+      - name: Detect web app
+        id: detect
+        working-directory: .
+        run: |
+          if [ -f web/package.json ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "web/package.json 不存在，跳过前端检查"
+          fi
+
+      - uses: pnpm/action-setup@d9184bf108216479bc5a137cc391f4d7b14c870b # v6.1.0
+        if: steps.detect.outputs.present == 'true'
+        with:
+          package_json_file: web/package.json
+          cache: true
+          cache_dependency_path: web/pnpm-lock.yaml
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        if: steps.detect.outputs.present == 'true'
+        with:
+          node-version: lts/*
+
+      - name: Install dependencies
+        if: steps.detect.outputs.present == 'true'
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        if: steps.detect.outputs.present == 'true'
+        run: pnpm run --if-present lint
+
+      - name: Typecheck
+        if: steps.detect.outputs.present == 'true'
+        run: pnpm run --if-present typecheck
+
+      - name: Test
+        if: steps.detect.outputs.present == 'true'
+        run: pnpm run --if-present test
