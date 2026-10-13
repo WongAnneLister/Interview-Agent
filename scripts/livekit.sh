@@ -6,7 +6,10 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ENV_FILE="$ROOT_DIR/.env"
-BIN="$ROOT_DIR/.tools/livekit/livekit-server.exe"
+case "$(uname -s)" in
+  MINGW* | MSYS* | CYGWIN*) BIN="$ROOT_DIR/.tools/livekit/livekit-server.exe" ;;
+  *) BIN="$ROOT_DIR/.tools/livekit/livekit-server" ;;
+esac
 
 if [ ! -x "$BIN" ]; then
   echo "找不到 $BIN，请先运行：bash scripts/fetch-livekit.sh" >&2

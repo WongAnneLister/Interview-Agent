@@ -43,14 +43,17 @@ make check-env    # 检查各依赖是否可用
 
 ### LiveKit（本机运行）
 
-LiveKit Server 以官方 Windows 原生程序运行在本机（浏览器、语音 worker 都在本机，媒体不出本机）。
+LiveKit Server 以原生程序运行在本机（浏览器、语音 worker 都在本机，媒体不出本机），支持 Windows（Git Bash）和 macOS。
 
 ```bash
-make fetch-livekit   # 下载官方 release 并校验 SHA-256，放到 .tools/livekit/
+make fetch-livekit   # 准备 LiveKit Server，放到 .tools/livekit/
 make livekit         # 启动（前台运行）；首次会生成 LIVEKIT_API_KEY / SECRET 写入 .env
 ```
 
-信令地址 `ws://127.0.0.1:7880`。媒体 UDP 端口 7882 绑定在局域网 IP 上（WebRTC 不使用回环地址做 ICE 候选），Windows 防火墙首次可能弹窗，选“专用网络”即可；没有 token 无法加入房间。
+- Windows：下载官方 release 并校验 SHA-256。
+- macOS：官方 release 没有 macOS 版，脚本会拉取固定 tag 的官方源码、校验 commit 哈希后用 Go 编译。需要 git、Go（1.21 以上任意版本，会自动下载 LiveKit 要求的工具链）和 Xcode 命令行工具（`xcode-select --install`）。首次编译需下载几百 MB 依赖；国内网络可先设置 `export GOPROXY=https://goproxy.cn,direct`。
+
+信令地址 `ws://127.0.0.1:7880`。媒体 UDP 端口 7882 绑定在局域网 IP 上（WebRTC 不使用回环地址做 ICE 候选），系统防火墙首次可能弹窗询问是否允许传入连接（Windows 选“专用网络”，macOS 选“允许”）；没有 token 无法加入房间。
 
 ## 配置
 
