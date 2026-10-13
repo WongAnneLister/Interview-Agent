@@ -41,6 +41,17 @@ make check-env    # 检查各依赖是否可用
 
 隧道建立后：Postgres `127.0.0.1:25432`，Redis `:26379`，S3 `http://127.0.0.1:29000`（文件浏览 `http://127.0.0.1:29001`），Prometheus `http://127.0.0.1:29090`，Grafana `http://127.0.0.1:23000`（用户 admin，密码见 `.env` 中的 `GRAFANA_ADMIN_PASSWORD`）。
 
+### LiveKit（本机运行）
+
+LiveKit Server 以官方 Windows 原生程序运行在本机（浏览器、语音 worker 都在本机，媒体不出本机）。
+
+```bash
+make fetch-livekit   # 下载官方 release 并校验 SHA-256，放到 .tools/livekit/
+make livekit         # 启动（前台运行）；首次会生成 LIVEKIT_API_KEY / SECRET 写入 .env
+```
+
+信令地址 `ws://127.0.0.1:7880`。媒体 UDP 端口 7882 绑定在局域网 IP 上（WebRTC 不使用回环地址做 ICE 候选），Windows 防火墙首次可能弹窗，选“专用网络”即可；没有 token 无法加入房间。
+
 ## 配置
 
 复制 `.env.example` 为 `.env` 后按注释填写。`.env` 包含密钥，不能提交（pre-commit 会拦截）。

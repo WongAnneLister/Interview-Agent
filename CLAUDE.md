@@ -31,7 +31,7 @@
 | 前端 | Next.js（App Router、TypeScript）、pnpm、Tailwind、livekit-client、@livekit/components-react |
 | 模型厂商 | 阿里云百炼（大模型、流式识别、流式合成）；DeepSeek 备用大模型 |
 | 可观测性 | OpenTelemetry（统一埋点）；Langfuse 自部署（大模型与 agent 链路、成本、评测分数、提示词版本对比）；Prometheus + Grafana（语音时序指标与系统指标）；自建最小用量表（预算保护，v1 计费以此为准） |
-| 开发依赖 | VPS 上的 Docker Compose（deploy/vps/）：PostgreSQL、Redis、S3 兼容对象存储（SeaweedFS）、Prometheus、Grafana，只绑定 127.0.0.1，本机经 SSH 隧道访问（make tunnel）；LiveKit 与 Langfuse 在本机运行（方式待定） |
+| 开发依赖 | VPS 上的 Docker Compose（deploy/vps/）：PostgreSQL、Redis、S3 兼容对象存储（SeaweedFS）、Prometheus、Grafana，只绑定 127.0.0.1，本机经 SSH 隧道访问（make tunnel）；LiveKit Server 在本机以官方原生程序运行（make fetch-livekit / make livekit，配置 deploy/local/livekit.yaml）；Langfuse 的部署位置在 PR-04b 确定 |
 | 质量 | ruff（格式 + lint）、pyright（src 严格模式）、pytest + pytest-asyncio、ESLint + tsc、pre-commit、GitHub Actions |
 
 ### 目录结构
@@ -40,7 +40,8 @@
 Interview-Agent/
   CLAUDE.md  Makefile  .env.example  README.md
   deploy/vps/        VPS 上开发依赖的 docker-compose、prometheus.yml、grafana/
-  scripts/           vps-deploy.sh  vps-env.sh  tunnel.sh  check_env.py
+  deploy/local/      本机运行的服务配置（livekit.yaml）
+  scripts/           vps-deploy.sh  vps-env.sh  tunnel.sh  check_env.py  fetch-livekit.sh  livekit.sh
   backend/
     pyproject.toml
     src/interview/

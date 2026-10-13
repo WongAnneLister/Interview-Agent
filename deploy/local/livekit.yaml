@@ -1,0 +1,23 @@
+# 本机开发用的 LiveKit Server 配置（由 scripts/livekit.sh 启动）。
+# 浏览器和语音 worker 都在本机，媒体不出本机，延迟测量最准确。
+# API 密钥不写在这里，由 scripts/livekit.sh 从 .env 读取后通过 --keys 传入。
+port: 7880
+# 信令（HTTP / WebSocket）只监听本机
+bind_addresses:
+  - 127.0.0.1
+
+rtc:
+  tcp_port: 7881
+  # 所有 UDP 媒体走单一端口，便于排查
+  udp_port: 7882
+  use_external_ip: false
+  # 说明：WebRTC 客户端（浏览器、LiveKit SDK）不会使用回环地址作为 ICE 候选，
+  # 媒体端口只能绑定在局域网 IP 上（和 livekit-server --dev 的做法一致），不能限定为 127.0.0.1。
+  # 加入房间必须持有用 API 密钥签发的 token，局域网内其它设备即使连到端口也进不了房间。
+
+room:
+  auto_create: true
+  empty_timeout: 300
+
+logging:
+  level: info

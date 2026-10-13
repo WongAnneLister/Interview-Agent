@@ -6,7 +6,7 @@ BACKEND := backend
 UV := uv run --directory $(BACKEND)
 
 .PHONY: help install fmt lint typecheck test check test-live hooks \
-	vps-deploy vps-env vps-ps vps-logs tunnel check-env
+	vps-deploy vps-env vps-ps vps-logs tunnel check-env fetch-livekit livekit
 
 help:
 	@echo "install    安装依赖并安装 git hooks"
@@ -22,6 +22,8 @@ help:
 	@echo "vps-logs   查看 VPS 上依赖容器的日志（service=postgres 指定服务）"
 	@echo "tunnel     建立到 VPS 的 SSH 隧道（开发时保持运行）"
 	@echo "check-env  检查各依赖是否可用（需要隧道已建立）"
+	@echo "fetch-livekit 下载并校验本机 LiveKit Server（官方 release）"
+	@echo "livekit    在本机启动 LiveKit Server（前台运行）"
 
 install:
 	uv sync --directory $(BACKEND)
@@ -66,3 +68,9 @@ tunnel:
 
 check-env:
 	python scripts/check_env.py
+
+fetch-livekit:
+	bash scripts/fetch-livekit.sh
+
+livekit:
+	bash scripts/livekit.sh
