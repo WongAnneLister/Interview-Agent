@@ -6,7 +6,7 @@ BACKEND := backend
 UV := uv run --directory $(BACKEND)
 
 .PHONY: help install fmt lint typecheck test check test-live hooks \
-	vps-deploy vps-env vps-ps vps-logs tunnel check-env fetch-livekit livekit
+	vps-deploy vps-env vps-ps vps-logs obs-up obs-down tunnel check-env fetch-livekit livekit
 
 help:
 	@echo "install    安装依赖并安装 git hooks"
@@ -17,6 +17,8 @@ help:
 	@echo "check      lint + typecheck + test（合并前必须通过）"
 	@echo "test-live  调用真实厂商的测试（需要 .env，手动运行）"
 	@echo "vps-deploy 部署 / 更新 VPS 上的开发依赖（可重复执行）"
+	@echo "obs-up     启动可观测性服务（本机 Langfuse + VPS 上的 Prometheus、Grafana）"
+	@echo "obs-down   停止可观测性服务（数据保留，不影响核心服务）"
 	@echo "vps-env    把 VPS 上生成的连接信息写入本机 .env（不显示密码）"
 	@echo "vps-ps     查看 VPS 上依赖容器的状态"
 	@echo "vps-logs   查看 VPS 上依赖容器的日志（service=postgres 指定服务）"
@@ -58,10 +60,16 @@ vps-env:
 	bash scripts/vps-env.sh
 
 vps-ps:
-	bash -c 'source scripts/_lib.sh && vps_ssh "cd $$VPS_DIR && docker compose ps"'
+	bash -c 'source scripts/_lib.sh && vps_ssh "cd $$VPS_DIR && docker compose --profile observability ps -a"'
 
 vps-logs:
-	bash -c 'source scripts/_lib.sh && vps_ssh "cd $$VPS_DIR && docker compose logs --tail=100 $(service)"'
+	bash -c 'source scripts/_lib.sh && vps_ssh "cd $$VPS_DIR && docker compose --profile observability logs --tail=100 $(service)"'
+
+obs-up:
+	bash scripts/obs.sh up
+
+obs-down:
+	bash scripts/obs.sh down
 
 tunnel:
 	bash scripts/tunnel.sh

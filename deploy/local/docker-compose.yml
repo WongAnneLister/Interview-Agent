@@ -1,0 +1,185 @@
+# 本机运行的自部署 Langfuse v4（参照官方 docker-compose.yml），用于大模型与 agent 链路追踪。
+# VPS 内存不够跑 ClickHouse，所以 Langfuse 放在本机，并自带 Postgres、Redis、S3（SeaweedFS）和 ClickHouse，
+# 与 VPS 上的业务依赖互不影响。全部服务在 observability profile 里，用 make obs-up / make obs-down 启停。
+# 端口只绑定 127.0.0.1。密码来自同目录的 .env（由 scripts/langfuse-local-init.sh 随机生成，不进仓库）。
+
+name: interview-agent-local
+
+services:
+  langfuse-postgres:
+    image: postgres:17-alpine
+    container_name: interview-langfuse-postgres
+    profiles: [observability]
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: langfuse
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: langfuse
+      TZ: UTC
+      PGTZ: UTC
+    volumes:
+      - langfuse-postgres-data:/var/lib/postgresql/data
+    mem_limit: 512m
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U langfuse -d langfuse"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Langfuse 要求 maxmemory-policy noeviction（队列任务不能被淘汰）
+  langfuse-redis:
+    image: redis:7-alpine
+    container_name: interview-langfuse-redis
+    profiles: [observability]
+    restart: unless-stopped
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD}", "--maxmemory-policy", "noeviction"]
+    volumes:
+      - langfuse-redis-data:/data
+    mem_limit: 256m
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" --no-auth-warning ping | grep PONG"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+
+  # 事件上传必需 S3；MinIO 已不再提供公开镜像，用 SeaweedFS（Langfuse 官方支持，需 path style）
+  langfuse-s3:
+    image: chrislusf/seaweedfs:latest
+    container_name: interview-langfuse-s3
+    profiles: [observability]
+    restart: unless-stopped
+    command:
+      - server
+      - -dir=/data
+      - -master.volumeSizeLimitMB=256
+      - -volume.max=20
+      - -s3
+      - -s3.port=8333
+      - -s3.config=/etc/seaweedfs/s3.json
+    ports:
+      # 浏览器通过预签名链接直传媒体文件时访问这个端口
+      - "127.0.0.1:${S3_PORT}:8333"
+    volumes:
+      - langfuse-s3-data:/data
+      - ./s3.json:/etc/seaweedfs/s3.json:ro
+    mem_limit: 384m
+
+  # 创建 langfuse 桶（已存在时忽略报错，可重复执行）；单节点首次启动要先完成选主
+  langfuse-s3-init:
+    image: chrislusf/seaweedfs:latest
+    container_name: interview-langfuse-s3-init
+    profiles: [observability]
+    depends_on:
+      - langfuse-s3
+    entrypoint: >
+      /bin/sh -c "
+      i=0; until wget -q -O - http://langfuse-s3:9333/cluster/status | grep -q '\"IsLeader\":true'; do
+        i=$$((i+1)); [ $$i -gt 60 ] && echo 'seaweedfs 未就绪' && exit 1; sleep 3; done;
+      echo 's3.bucket.create -name langfuse' | weed shell -master=langfuse-s3:9333 || true
+      "
+    restart: "no"
+
+  # Langfuse v4 要求 ClickHouse >= 25.12，且时区必须是 UTC（镜像默认即 UTC）
+  langfuse-clickhouse:
+    image: clickhouse/clickhouse-server:25.12
+    container_name: interview-langfuse-clickhouse
+    profiles: [observability]
+    restart: unless-stopped
+    user: "101:101"
+    environment:
+      CLICKHOUSE_DB: default
+      CLICKHOUSE_USER: clickhouse
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD}
+    volumes:
+      - langfuse-clickhouse-data:/var/lib/clickhouse
+      - langfuse-clickhouse-logs:/var/log/clickhouse-server
+    mem_limit: 1536m
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://127.0.0.1:8123/ping || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  langfuse-worker:
+    image: docker.langfuse.com/langfuse/langfuse-worker:4
+    container_name: interview-langfuse-worker
+    profiles: [observability]
+    restart: unless-stopped
+    depends_on: &langfuse-depends-on
+      langfuse-postgres:
+        condition: service_healthy
+      langfuse-redis:
+        condition: service_healthy
+      langfuse-clickhouse:
+        condition: service_healthy
+      langfuse-s3-init:
+        condition: service_completed_successfully
+    environment: &langfuse-env
+      NEXTAUTH_URL: http://127.0.0.1:${LANGFUSE_PORT}
+      DATABASE_URL: postgresql://langfuse:${POSTGRES_PASSWORD}@langfuse-postgres:5432/langfuse
+      SALT: ${LANGFUSE_SALT}
+      ENCRYPTION_KEY: ${LANGFUSE_ENCRYPTION_KEY}
+      TELEMETRY_ENABLED: "false"
+      CLICKHOUSE_MIGRATION_URL: clickhouse://langfuse-clickhouse:9000
+      CLICKHOUSE_URL: http://langfuse-clickhouse:8123
+      CLICKHOUSE_USER: clickhouse
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD}
+      CLICKHOUSE_CLUSTER_ENABLED: "false"
+      REDIS_CONNECTION_STRING: redis://:${REDIS_PASSWORD}@langfuse-redis:6379/0
+      LANGFUSE_S3_EVENT_UPLOAD_BUCKET: langfuse
+      LANGFUSE_S3_EVENT_UPLOAD_REGION: us-east-1
+      LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: http://langfuse-s3:8333
+      LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: ${S3_ACCESS_KEY}
+      LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: ${S3_SECRET_KEY}
+      LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: "true"
+      LANGFUSE_S3_EVENT_UPLOAD_PREFIX: events/
+      LANGFUSE_S3_MEDIA_UPLOAD_BUCKET: langfuse
+      LANGFUSE_S3_MEDIA_UPLOAD_REGION: us-east-1
+      LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT: http://langfuse-s3:8333
+      LANGFUSE_S3_MEDIA_UPLOAD_ACCESS_KEY_ID: ${S3_ACCESS_KEY}
+      LANGFUSE_S3_MEDIA_UPLOAD_SECRET_ACCESS_KEY: ${S3_SECRET_KEY}
+      LANGFUSE_S3_MEDIA_UPLOAD_FORCE_PATH_STYLE: "true"
+      LANGFUSE_S3_MEDIA_UPLOAD_PREFIX: media/
+    mem_limit: 1g
+
+  langfuse-web:
+    image: docker.langfuse.com/langfuse/langfuse:4
+    container_name: interview-langfuse-web
+    profiles: [observability]
+    restart: unless-stopped
+    depends_on: *langfuse-depends-on
+    ports:
+      - "127.0.0.1:${LANGFUSE_PORT}:3000"
+    environment:
+      <<: *langfuse-env
+      NEXTAUTH_SECRET: ${LANGFUSE_NEXTAUTH_SECRET}
+      # Next.js 默认监听 $HOSTNAME（Docker 设为容器 ID），改为全部地址，容器内健康检查才能访问 127.0.0.1
+      HOSTNAME: 0.0.0.0
+      LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT: http://127.0.0.1:${S3_PORT}
+      LANGFUSE_S3_MEDIA_UPLOAD_INTERNAL_ENDPOINT: http://langfuse-s3:8333
+      # 无界面初始化：首次启动时创建组织、项目、API 密钥和管理员账号
+      LANGFUSE_INIT_ORG_ID: interview-agent
+      LANGFUSE_INIT_ORG_NAME: Interview Agent
+      LANGFUSE_INIT_PROJECT_ID: interview-agent-dev
+      LANGFUSE_INIT_PROJECT_NAME: interview-agent-dev
+      LANGFUSE_INIT_PROJECT_PUBLIC_KEY: ${LANGFUSE_INIT_PUBLIC_KEY}
+      LANGFUSE_INIT_PROJECT_SECRET_KEY: ${LANGFUSE_INIT_SECRET_KEY}
+      LANGFUSE_INIT_USER_EMAIL: ${LANGFUSE_INIT_USER_EMAIL}
+      LANGFUSE_INIT_USER_NAME: admin
+      LANGFUSE_INIT_USER_PASSWORD: ${LANGFUSE_INIT_USER_PASSWORD}
+    mem_limit: 1g
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:3000/api/public/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 120s
+
+volumes:
+  langfuse-postgres-data:
+  langfuse-redis-data:
+  langfuse-s3-data:
+  langfuse-clickhouse-data:
+  langfuse-clickhouse-logs:

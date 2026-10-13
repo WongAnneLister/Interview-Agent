@@ -30,7 +30,7 @@ uv run --directory backend pytest
 
 ## 开发依赖（部署在 VPS 上）
 
-Postgres、Redis、S3 兼容对象存储（SeaweedFS）、Prometheus、Grafana 运行在 VPS 的 Docker 中，端口只绑定在服务器的 127.0.0.1 上，本机通过 SSH 隧道访问。需要先在 `.env` 中填好 `VPS_HOST / VPS_PORT / VPS_USER`，并配置好 SSH 密钥免密登录。
+Postgres、Redis、S3 兼容对象存储（SeaweedFS）以及 Prometheus、Grafana 运行在 VPS 的 Docker 中，端口只绑定在服务器的 127.0.0.1 上，本机通过 SSH 隧道访问。需要先在 `.env` 中填好 `VPS_HOST / VPS_PORT / VPS_USER`，并配置好 SSH 密钥免密登录。
 
 ```bash
 make vps-deploy   # 部署或更新 VPS 上的依赖（首次会在服务器上随机生成密码）
@@ -39,7 +39,30 @@ make tunnel       # 建立 SSH 隧道，开发时保持运行
 make check-env    # 检查各依赖是否可用
 ```
 
-隧道建立后：Postgres `127.0.0.1:25432`，Redis `:26379`，S3 `http://127.0.0.1:29000`（文件浏览 `http://127.0.0.1:29001`），Prometheus `http://127.0.0.1:29090`，Grafana `http://127.0.0.1:23000`（用户 admin，密码见 `.env` 中的 `GRAFANA_ADMIN_PASSWORD`）。
+隧道建立后：Postgres `127.0.0.1:25432`，Redis `:26379`，S3 `http://127.0.0.1:29000`（文件浏览 `http://127.0.0.1:29001`）。
+
+### 可观测性（Langfuse、Prometheus、Grafana）
+
+都放在 compose 的 `observability` profile 里，可以单独启停，不影响核心服务。
+
+- **Langfuse v4 运行在本机 Docker**（`deploy/local/docker-compose.yml`）：VPS 内存放不下 ClickHouse，所以本机这套自带 Postgres、Redis、S3（SeaweedFS）和 ClickHouse，合计内存上限约 4.5 GB，与 VPS 上的业务依赖互不影响。链路数据直接发到本机，不经过隧道。
+- **Prometheus、Grafana 仍在 VPS**：通过隧道的反向端口抓取本机 API、语音 worker 和评测进程的指标。
+
+```bash
+make vps-deploy   # 上传最新配置（Prometheus 抓取任务等）
+make obs-up       # 生成本机 Langfuse 的随机密码和 API 密钥（写入 .env），启动本机 Langfuse 和 VPS 上的 Prometheus、Grafana
+make tunnel       # Grafana / Prometheus 走隧道
+make check-env    # Langfuse / Prometheus / Grafana 显示 OK；Langfuse 首次启动需要 2–3 分钟完成数据库迁移
+make obs-down     # 不用时停止（数据保留）
+```
+
+| 服务 | 地址 | 登录 |
+| --- | --- | --- |
+| Langfuse | `http://127.0.0.1:23100` | `.env` 中的 `LANGFUSE_ADMIN_EMAIL` / `LANGFUSE_ADMIN_PASSWORD` |
+| Grafana | `http://127.0.0.1:23000` | 用户 admin，密码见 `.env` 中的 `GRAFANA_ADMIN_PASSWORD` |
+| Prometheus | `http://127.0.0.1:29090` | 无 |
+
+Langfuse 首次启动时会自动创建组织 `Interview Agent`、项目 `interview-agent-dev` 和该项目的 API 密钥（即 `.env` 中的 `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY`），无需在网页上手动创建。Grafana 已自动配置 Prometheus 数据源。本机 API、语音 worker、评测进程没运行时，Prometheus 里对应的目标显示为 down，属于正常现象。
 
 ### LiveKit（本机运行）
 

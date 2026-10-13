@@ -10,16 +10,18 @@ import socket
 import sys
 import urllib.request
 
-CHECKS: list[tuple[str, str, int, str | None]] = [
-    # 名称, 主机, 端口, 健康检查 URL（None 表示只检查 TCP）
-    ("Postgres", "127.0.0.1", 25432, None),
-    ("Redis", "127.0.0.1", 26379, None),
-    ("S3 (SeaweedFS)", "127.0.0.1", 29000, None),
-    ("S3 文件浏览", "127.0.0.1", 29001, "http://127.0.0.1:29001/"),
-    ("Prometheus", "127.0.0.1", 29090, "http://127.0.0.1:29090/-/ready"),
-    ("Grafana", "127.0.0.1", 23000, "http://127.0.0.1:23000/api/health"),
+CHECKS: list[tuple[str, str, int, str | None, bool]] = [
+    # 名称, 主机, 端口, 健康检查 URL（None 表示只检查 TCP）, 是否可选
+    ("Postgres", "127.0.0.1", 25432, None, False),
+    ("Redis", "127.0.0.1", 26379, None, False),
+    ("S3 (SeaweedFS)", "127.0.0.1", 29000, None, False),
+    ("S3 文件浏览", "127.0.0.1", 29001, "http://127.0.0.1:29001/", False),
     # LiveKit 运行在本机（不经过隧道）
-    ("LiveKit（本机）", "127.0.0.1", 7880, "http://127.0.0.1:7880/"),
+    ("LiveKit（本机）", "127.0.0.1", 7880, "http://127.0.0.1:7880/", False),
+    # 可观测性服务（make obs-up 启动），未启动时只提示，不算失败
+    ("Prometheus", "127.0.0.1", 29090, "http://127.0.0.1:29090/-/ready", True),
+    ("Grafana", "127.0.0.1", 23000, "http://127.0.0.1:23000/api/health", True),
+    ("Langfuse（本机）", "127.0.0.1", 23100, "http://127.0.0.1:23100/api/public/health", True),
 ]
 
 
@@ -44,13 +46,15 @@ def main() -> int:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
     failed = 0
-    for name, host, port, url in CHECKS:
+    for name, host, port, url, optional in CHECKS:
         ok = tcp_ok(host, port) and (url is None or http_ok(url))
-        print(f"{'OK  ' if ok else 'FAIL'} {name:<15} {host}:{port}")
-        failed += not ok
+        status = "OK  " if ok else ("SKIP" if optional else "FAIL")
+        print(f"{status} {name:<15} {host}:{port}")
+        failed += not ok and not optional
     if failed:
         print(f"\n{failed} 项失败：确认 scripts/tunnel.sh 正在运行，")
         print("且 VPS 上的容器都健康（make vps-ps）。")
+    print("SKIP 表示可观测性服务未启动（需要时运行 make obs-up）。")
     return 1 if failed else 0
 
 
