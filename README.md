@@ -45,7 +45,7 @@ make check-env    # 检查各依赖是否可用
 
 都放在 compose 的 `observability` profile 里，可以单独启停，不影响核心服务。
 
-- **Langfuse v4 运行在本机 Docker**（`deploy/local/docker-compose.yml`）：VPS 内存放不下 ClickHouse，所以本机这套自带 Postgres、Redis、S3（SeaweedFS）和 ClickHouse，合计内存上限约 4.5 GB，与 VPS 上的业务依赖互不影响。链路数据直接发到本机，不经过隧道。
+- **Langfuse v4 运行在本机 Docker**（`deploy/local/docker-compose.yml`）：VPS 内存放不下 ClickHouse，所以本机这套自带 Postgres、Redis、S3（SeaweedFS）和 ClickHouse，合计内存上限约 6 GB（Docker Desktop 至少分配 8 GB），与 VPS 上的业务依赖互不影响。链路数据直接发到本机，不经过隧道。
 - **Prometheus、Grafana 仍在 VPS**：通过隧道的反向端口抓取本机 API、语音 worker 和评测进程的指标。
 
 ```bash
