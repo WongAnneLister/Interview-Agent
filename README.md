@@ -62,6 +62,12 @@ make obs-down     # 不用时停止（数据保留）
 | Grafana | `http://127.0.0.1:23000` | 用户 admin，密码见 `.env` 中的 `GRAFANA_ADMIN_PASSWORD` |
 | Prometheus | `http://127.0.0.1:29090` | 无 |
 
+首次 `make obs-up` 要下载约 1.5 GB 镜像（Langfuse web / worker、ClickHouse）。国内网络拉 Docker Hub 很慢时，可以先在 Docker Desktop 配好镜像加速源；仍然不行的话，可以在 VPS 上拉取 arm64 版本后经 SSH 传回本机，例如：
+
+```bash
+ssh -p <端口> root@<VPS> "docker pull -q --platform linux/arm64 langfuse/langfuse:4 && docker save --platform linux/arm64 langfuse/langfuse:4 | gzip" | gunzip | docker load
+```
+
 Langfuse 首次启动时会自动创建组织 `Interview Agent`、项目 `interview-agent-dev` 和该项目的 API 密钥（即 `.env` 中的 `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY`），无需在网页上手动创建。Grafana 已自动配置 Prometheus 数据源。本机 API、语音 worker、评测进程没运行时，Prometheus 里对应的目标显示为 down，属于正常现象。
 
 ### LiveKit（本机运行）

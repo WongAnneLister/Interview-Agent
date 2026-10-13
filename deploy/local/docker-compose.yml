@@ -2,6 +2,7 @@
 # VPS 内存不够跑 ClickHouse，所以 Langfuse 放在本机，并自带 Postgres、Redis、S3（SeaweedFS）和 ClickHouse，
 # 与 VPS 上的业务依赖互不影响。全部服务在 observability profile 里，用 make obs-up / make obs-down 启停。
 # 端口只绑定 127.0.0.1。密码来自同目录的 .env（由 scripts/langfuse-local-init.sh 随机生成，不进仓库）。
+# Langfuse 镜像用 Docker Hub 地址（与官方的 docker.langfuse.com 是同一镜像），国内配置的镜像加速源才能生效。
 
 name: interview-agent-local
 
@@ -103,7 +104,7 @@ services:
       retries: 20
 
   langfuse-worker:
-    image: docker.langfuse.com/langfuse/langfuse-worker:4
+    image: langfuse/langfuse-worker:4
     container_name: interview-langfuse-worker
     profiles: [observability]
     restart: unless-stopped
@@ -145,7 +146,7 @@ services:
     mem_limit: 1g
 
   langfuse-web:
-    image: docker.langfuse.com/langfuse/langfuse:4
+    image: langfuse/langfuse:4
     container_name: interview-langfuse-web
     profiles: [observability]
     restart: unless-stopped
