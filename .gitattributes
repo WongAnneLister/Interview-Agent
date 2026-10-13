@@ -1,0 +1,7 @@
+# 统一使用 LF 换行，避免 Windows 与 CI 之间的格式差异
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.wav binary
+*.pdf binary

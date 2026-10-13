@@ -1,0 +1,36 @@
+# 密钥与本地配置
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+*.egg-info/
+dist/
+build/
+.coverage
+htmlcov/
+
+# Node / 前端
+node_modules/
+.next/
+out/
+*.tsbuildinfo
+
+# 不提交的测试数据与输出（录音、合成音频、真实简历）
+backend/tests/live/fixtures/
+backend/tests/live/out/
+backend/tools/benchmark/data/
+
+# 仅供个人学习的调研资料，不进仓库
+docs/research/
+
+# 编辑器与系统
+.idea/
+.DS_Store
+Thumbs.db
