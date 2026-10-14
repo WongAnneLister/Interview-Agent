@@ -5,7 +5,7 @@
 BACKEND := backend
 UV := uv run --directory $(BACKEND)
 
-.PHONY: help install fmt lint typecheck test check test-live hooks obs-smoke migrate migration \
+.PHONY: help install fmt lint typecheck test check test-live hooks obs-smoke migrate migration seed test-db \
 	vps-deploy vps-env vps-ps vps-logs obs-up obs-down tunnel check-env fetch-livekit livekit
 
 help:
@@ -18,6 +18,8 @@ help:
 	@echo "test-live  调用真实厂商的测试（需要 .env，手动运行）"
 	@echo "migrate    把数据库迁移到最新版本（需要隧道）"
 	@echo "migration  按模型变化生成迁移：make migration name=add_xxx（需要隧道，生成后人工检查）"
+	@echo "seed       创建本地用户并把 id 写入 .env 的 DEFAULT_USER_ID（需要隧道，先 migrate）"
+	@echo "test-db    数据库集成测试：建临时库、跑迁移和测试、结束后删除（需要隧道）"
 	@echo "obs-smoke  发送一条示例链路到 Langfuse 并暴露示例指标（需要隧道和 obs-up）"
 	@echo "vps-deploy 部署 / 更新 VPS 上的开发依赖（可重复执行）"
 	@echo "obs-up     启动可观测性服务（本机 Langfuse + VPS 上的 Prometheus、Grafana）"
@@ -62,6 +64,12 @@ migrate:
 migration:
 	@test -n "$(name)" || { echo "用法：make migration name=add_xxx"; exit 1; }
 	$(UV) alembic revision --autogenerate -m "$(name)"
+
+seed:
+	$(UV) python -m interview.db.seed
+
+test-db:
+	$(UV) pytest -m db
 
 obs-smoke:
 	$(UV) python tools/obs_smoke.py

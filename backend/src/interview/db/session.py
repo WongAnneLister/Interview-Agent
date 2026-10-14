@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from sqlalchemy.ext.asyncio import create_async_engine as _create_async_engine
 
 from interview.config import get_settings
+from interview.db.scope import UserScopedSession
 from interview.observability.instrument import instrument_sqlalchemy
 
 # asyncpg：建立连接的超时，以及单条语句的超时（秒）
@@ -40,10 +41,15 @@ def get_engine() -> AsyncEngine:
     return engine
 
 
+def make_sessionmaker(engine: AsyncEngine) -> async_sessionmaker[AsyncSession]:
+    """会话都带 user_id 拦截（见 db/scope.py）；业务代码通过仓储层绑定用户。"""
+    # 提交后不让对象过期，避免在异步代码里访问属性时触发隐式查询
+    return async_sessionmaker(engine, expire_on_commit=False, sync_session_class=UserScopedSession)
+
+
 @lru_cache(maxsize=1)
 def get_sessionmaker() -> async_sessionmaker[AsyncSession]:
-    # 提交后不让对象过期，避免在异步代码里访问属性时触发隐式查询
-    return async_sessionmaker(get_engine(), expire_on_commit=False)
+    return make_sessionmaker(get_engine())
 
 
 async def get_session() -> AsyncIterator[AsyncSession]:
