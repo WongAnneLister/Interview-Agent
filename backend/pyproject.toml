@@ -65,9 +65,10 @@ venv = ".venv"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
-addopts = "-ra -m 'not live'"
+addopts = "-ra -m 'not live and not db'"
 markers = [
   "live: 调用真实厂商的测试，默认不运行（make test-live 手动运行）",
+  "db: 连 Postgres 临时库的集成测试，默认不运行（make test-db 手动运行，需要隧道）",
 ]
 
 [dependency-groups]

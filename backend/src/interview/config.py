@@ -10,6 +10,7 @@ from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
+from uuid import UUID
 
 from pydantic import BaseModel, Field, SecretStr, ValidationError
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -38,6 +39,8 @@ class AppSettings(BaseSettings):
     app_env: Literal["dev", "test", "prod"] = "dev"
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
     log_format: Literal["json", "console"] = "json"
+    # v0 唯一的本地用户，由 make seed 创建并写入 .env
+    default_user_id: UUID | None = None
 
 
 class DatabaseSettings(BaseSettings):

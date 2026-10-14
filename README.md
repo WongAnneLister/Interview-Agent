@@ -38,6 +38,8 @@ make vps-env      # 把连接信息写入本机 .env（不显示密码）
 make tunnel       # 建立 SSH 隧道，开发时保持运行
 make check-env    # 检查各依赖是否可用
 make migrate      # 把数据库迁移到最新版本
+make seed         # 创建本地用户，id 写入 .env 的 DEFAULT_USER_ID（可重复执行）
+make test-db      # 数据库集成测试：建临时库 → 迁移 → 测试 → 删除临时库
 ```
 
 改了 `backend/src/interview/db/models.py` 之后，用 `make migration name=add_xxx` 生成迁移，人工检查后再 `make migrate`。
