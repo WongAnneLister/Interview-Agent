@@ -1,4 +1,4 @@
-"""Prometheus 指标：计数器 / 直方图的注册工具，以及 API、worker、评测进程的暴露方式。
+"""Prometheus 指标：计数器 / 直方图 / 仪表的注册工具，以及 API、worker、评测进程的暴露方式。
 
 - 指标名统一加 interview_ 前缀；同名重复注册返回已有对象（模块被多处导入时不会报错）。
 - 使用默认 REGISTRY，自带进程 CPU、内存、GC 等指标。
@@ -16,6 +16,7 @@ from prometheus_client import (
     CONTENT_TYPE_LATEST,
     REGISTRY,
     Counter,
+    Gauge,
     Histogram,
     generate_latest,
     start_http_server,
@@ -23,11 +24,11 @@ from prometheus_client import (
 
 PREFIX = "interview_"
 
-_metrics: dict[str, tuple[Counter | Histogram, tuple[str, ...]]] = {}
+_metrics: dict[str, tuple[Counter | Histogram | Gauge, tuple[str, ...]]] = {}
 _lock = Lock()
 
 
-def _get_or_create[M: (Counter, Histogram)](
+def _get_or_create[M: (Counter, Histogram, Gauge)](
     kind: type[M], name: str, labelnames: Sequence[str], create: Callable[[str, tuple[str, ...]], M]
 ) -> M:
     full = PREFIX + name
@@ -63,6 +64,13 @@ def histogram(
         name,
         labelnames,
         lambda full, labels: Histogram(full, documentation, labels, buckets=tuple(buckets)),
+    )
+
+
+def gauge(name: str, documentation: str, labelnames: Sequence[str] = ()) -> Gauge:
+    """注册（或取回）仪表：表示当前值（如当日累计成本），可增可减。"""
+    return _get_or_create(
+        Gauge, name, labelnames, lambda full, labels: Gauge(full, documentation, labels)
     )
 
 

@@ -7,6 +7,7 @@
    Langfuse 的成本没有币种，界面显示 “$”，实际数值是人民币（metadata 标注 cost_currency=CNY）。
 3. 累加 Prometheus 计数器 interview_cost_cny_total、interview_tokens_total。
 
+cost_breakdown() 按角色、厂商汇总一场面试的成本，并给出每分钟成本（tools/cost_report.py 使用）。
 缺价格时成本记为空（见 pricing.py）；写库失败只记错误日志和计数器，不抛出，不中断面试。
 """
 
@@ -14,7 +15,8 @@ from __future__ import annotations
 
 import json
 import uuid
-from collections.abc import Mapping
+from collections import defaultdict
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -22,12 +24,13 @@ from decimal import Decimal
 import structlog
 from opentelemetry import trace
 from opentelemetry.trace import Span, format_trace_id
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from interview.db.models import UsageEvent, UsageRole, UsageUnit
+from interview.db.models import Interview, UsageEvent, UsageRole, UsageUnit
 from interview.db.scope import bind_user
 from interview.db.session import get_sessionmaker
-from interview.observability.pricing import PriceTable, get_price_table
+from interview.observability.pricing import COST_QUANTUM, PriceTable, get_price_table
 from interview.observability.prometheus import counter
 from interview.observability.tracing import LF
 
@@ -196,3 +199,85 @@ async def _persist(
         log.exception("usage_record_failed", role=role.value, events=len(events))
         return False
     return True
+
+
+@dataclass(frozen=True)
+class CostLine:
+    """一场面试里某个 角色 + 厂商 + 型号 的成本合计。"""
+
+    role: str
+    provider: str
+    model: str
+    cost_cny: Decimal  # 缺价格的记录不计入
+    events: int
+    unpriced_events: int
+
+
+@dataclass(frozen=True)
+class CostBreakdown:
+    total_cny: Decimal
+    by_role: dict[str, Decimal]
+    by_provider: dict[str, Decimal]
+    lines: list[CostLine]
+    duration_min: Decimal | None  # 面试未开始或未结束时为空
+    cost_per_min_cny: Decimal | None
+    unpriced_events: int  # 大于 0 时成本被低估
+
+
+def summarize(lines: Iterable[CostLine], duration_s: float | None) -> CostBreakdown:
+    """把明细汇总为按角色、按厂商的成本和每分钟成本。"""
+    items = sorted(lines, key=lambda line: line.cost_cny, reverse=True)
+    by_role: defaultdict[str, Decimal] = defaultdict(Decimal)
+    by_provider: defaultdict[str, Decimal] = defaultdict(Decimal)
+    for line in items:
+        by_role[line.role] += line.cost_cny
+        by_provider[line.provider] += line.cost_cny
+    total = sum((line.cost_cny for line in items), Decimal(0))
+    minutes = Decimal(str(duration_s)) / 60 if duration_s and duration_s > 0 else None
+    return CostBreakdown(
+        total_cny=total,
+        by_role=dict(by_role),
+        by_provider=dict(by_provider),
+        lines=items,
+        duration_min=minutes.quantize(Decimal("0.01")) if minutes else None,
+        cost_per_min_cny=(total / minutes).quantize(COST_QUANTUM) if minutes else None,
+        unpriced_events=sum(line.unpriced_events for line in items),
+    )
+
+
+async def cost_breakdown(
+    interview_id: uuid.UUID,
+    *,
+    user_id: uuid.UUID,
+    sessionmaker: async_sessionmaker[AsyncSession] | None = None,
+) -> CostBreakdown:
+    """一场面试的成本拆解；时长取 interviews.ended_at - started_at。"""
+    cost = UsageEvent.est_cost_cny
+    statement = (
+        select(
+            UsageEvent.role,
+            UsageEvent.provider,
+            UsageEvent.model,
+            func.coalesce(func.sum(cost), 0),
+            func.count(),
+            func.count().filter(cost.is_(None)),
+        )
+        .where(UsageEvent.interview_id == interview_id)
+        .group_by(UsageEvent.role, UsageEvent.provider, UsageEvent.model)
+    )
+    async with (sessionmaker or get_sessionmaker())() as session:
+        bind_user(session.sync_session, user_id)
+        rows = (await session.execute(statement)).all()
+        times = (
+            await session.execute(
+                select(Interview.started_at, Interview.ended_at).where(Interview.id == interview_id)
+            )
+        ).one_or_none()
+    duration_s = None
+    if times is not None and times.started_at is not None and times.ended_at is not None:
+        duration_s = (times.ended_at - times.started_at).total_seconds()
+    lines = [
+        CostLine(role.value, provider, model, Decimal(total), events, unpriced)
+        for role, provider, model, total, events, unpriced in rows
+    ]
+    return summarize(lines, duration_s)

@@ -6,7 +6,8 @@
 - flush 时新增或修改的 UserOwned 对象，user_id 必须等于绑定用户，否则抛 UserScopeMismatchError。
 
 不覆盖的情况：text() 原生 SQL、直接对 Table 的 Core 语句、ORM 批量 INSERT。
-这些写法只允许出现在迁移和种子脚本里。
+这些写法只允许出现在迁移和种子脚本里；唯一例外是 observability/budget.py 的每日总支出
+（跨用户的系统级熔断，只返回一个总数）。
 """
 
 from __future__ import annotations

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import pytest
@@ -13,6 +14,7 @@ from sqlalchemy import delete, func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
+from interview.config import CostSettings
 from interview.db.models import (
     AppendOnlyError,
     Interview,
@@ -31,8 +33,9 @@ from interview.db.repository import UserScopedRepository
 from interview.db.scope import bind_user
 from interview.db.seed import ensure_default_user
 from interview.db.session import make_sessionmaker
+from interview.observability.budget import BudgetStatus, check
 from interview.observability.pricing import PriceTable
-from interview.observability.usage import record_usage
+from interview.observability.usage import cost_breakdown, record_usage
 
 pytestmark = pytest.mark.db
 
@@ -181,3 +184,103 @@ async def test_usage_events_are_persisted_and_append_only(engine: AsyncEngine) -
         await session.execute(delete(Interview).where(Interview.id == a.interview_id))
         await session.commit()
         assert await session.scalar(select(func.count()).select_from(UsageEvent)) == 2
+
+
+def _usage(
+    owner: Owner,
+    cost: str | None,
+    *,
+    role: UsageRole = UsageRole.FRONT,
+    provider: str = "bailian",
+    is_eval: bool = False,
+    created_at: datetime | None = None,
+    interview: bool = True,
+) -> UsageEvent:
+    return UsageEvent(
+        user_id=owner.user_id,
+        interview_id=owner.interview_id if interview else None,
+        role=role,
+        provider=provider,
+        model="m",
+        unit=UsageUnit.INPUT_TOKENS,
+        quantity=Decimal(1000),
+        est_cost_cny=None if cost is None else Decimal(cost),
+        is_eval=is_eval,
+        created_at=created_at or datetime.now(UTC),
+    )
+
+
+async def _add(engine: AsyncEngine, owner: Owner, *events: UsageEvent) -> None:
+    async with _session_for(engine, owner) as session:
+        session.add_all(events)
+        await session.commit()
+
+
+async def test_budget_check_interview_and_daily(engine: AsyncEngine) -> None:
+    a = await _make_owner(engine, "a@test")
+    b = await _make_owner(engine, "b@test")
+    yesterday = datetime.now(UTC) - timedelta(days=2)
+    await _add(engine, a, _usage(a, "3"), _usage(a, "1.2"), _usage(a, None))
+    await _add(
+        engine,
+        b,
+        _usage(b, "30", interview=False),
+        _usage(b, "100", is_eval=True),  # 评测不计入每日预算
+        _usage(b, "500", created_at=yesterday),  # 不是今天
+    )
+    result = await check(
+        a.interview_id,
+        user_id=a.user_id,
+        sessionmaker=make_sessionmaker(engine),
+        settings=CostSettings(max_cost_per_interview_cny=Decimal(5), daily_budget_cny=Decimal(40)),
+    )
+    assert result.interview.spent_cny == Decimal("4.2")
+    assert result.interview.status is BudgetStatus.WARN
+    assert result.unpriced_events == 1
+    # 全部用户、不含评测：a 的 4.2 + b 的 30
+    assert result.daily.spent_cny == Decimal("34.2")
+    assert result.daily.status is BudgetStatus.WARN
+
+    # b 的面试单场已超（评测面试同样受单场预算限制）
+    result_b = await check(
+        b.interview_id,
+        user_id=b.user_id,
+        sessionmaker=make_sessionmaker(engine),
+        settings=CostSettings(max_cost_per_interview_cny=Decimal(5), daily_budget_cny=Decimal(30)),
+    )
+    assert result_b.interview.status is BudgetStatus.EXCEEDED
+    assert result_b.daily.status is BudgetStatus.EXCEEDED
+    assert result_b.status is BudgetStatus.EXCEEDED
+
+
+async def test_cost_breakdown_for_one_interview(engine: AsyncEngine) -> None:
+    a = await _make_owner(engine, "a@test")
+    b = await _make_owner(engine, "b@test")
+    async with _session_for(engine, a) as session:
+        interview = await session.get(Interview, a.interview_id)
+        assert interview is not None
+        interview.started_at = datetime(2026, 10, 14, 10, 0, tzinfo=UTC)
+        interview.ended_at = datetime(2026, 10, 14, 10, 25, tzinfo=UTC)
+        await session.commit()
+    await _add(
+        engine,
+        a,
+        _usage(a, "1"),
+        _usage(a, "0.5"),
+        _usage(a, "0.5", role=UsageRole.TTS),
+        _usage(a, None, role=UsageRole.ASR),
+        _usage(a, "0.5", role=UsageRole.FRONT, provider="deepseek"),
+    )
+    await _add(engine, b, _usage(b, "99"))
+
+    breakdown = await cost_breakdown(
+        a.interview_id, user_id=a.user_id, sessionmaker=make_sessionmaker(engine)
+    )
+    assert breakdown.total_cny == Decimal("2.5")
+    assert breakdown.by_role == {"front": Decimal("2"), "tts": Decimal("0.5"), "asr": 0}
+    assert breakdown.by_provider == {"bailian": Decimal("2"), "deepseek": Decimal("0.5")}
+    assert breakdown.duration_min == Decimal("25.00")
+    assert breakdown.cost_per_min_cny == Decimal("0.1")
+    assert breakdown.unpriced_events == 1
+    front = next(x for x in breakdown.lines if x.role == "front" and x.provider == "bailian")
+    assert (front.cost_cny, front.events) == (Decimal("1.5"), 2)
