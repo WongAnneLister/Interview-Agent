@@ -7,11 +7,12 @@ from pathlib import Path
 import pytest
 from alembic.config import Config
 from alembic.script import ScriptDirectory
-from sqlalchemy import ForeignKeyConstraint, Table
+from sqlalchemy import ForeignKeyConstraint, Table, delete, update
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.schema import CreateTable
 
-from interview.db.models import Base, User, UserOwned
+from interview.db.models import AppendOnlyError, Base, UsageEvent, User, UserOwned
+from interview.db.session import create_engine, make_sessionmaker
 
 BACKEND_DIR = Path(__file__).resolve().parents[2]
 TABLES = Base.metadata.tables
@@ -29,6 +30,7 @@ def test_all_expected_tables_exist() -> None:
         "evaluations",
         "reports",
         "turn_metrics",
+        "usage_events",
     }
 
 
@@ -69,3 +71,20 @@ def test_enums_are_stored_as_values_with_check_constraint() -> None:
 def test_migrations_have_single_head() -> None:
     config = Config(toml_file=str(BACKEND_DIR / "pyproject.toml"))
     assert len(ScriptDirectory.from_config(config).get_heads()) == 1
+
+
+def test_usage_events_have_no_interview_or_turn_fk() -> None:
+    # 只追加的账本：删除面试或发言时用量记录保留
+    fks = [c for c in TABLES["usage_events"].constraints if isinstance(c, ForeignKeyConstraint)]
+    assert [fk.referred_table.name for fk in fks] == ["users"]
+
+
+async def test_usage_events_reject_bulk_update_and_delete() -> None:
+    # 拦截发生在建立连接之前，不需要数据库
+    engine = create_engine("postgresql+asyncpg://u:p@127.0.0.1:1/db")
+    async with make_sessionmaker(engine)() as session:
+        with pytest.raises(AppendOnlyError):
+            await session.execute(update(UsageEvent).values(quantity=0))
+        with pytest.raises(AppendOnlyError):
+            await session.execute(delete(UsageEvent))
+    await engine.dispose()

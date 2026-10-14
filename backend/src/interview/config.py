@@ -18,6 +18,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # src/interview/config.py → 仓库根目录
 REPO_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_ENV_FILE = REPO_ROOT / ".env"
+DEFAULT_PRICING_FILE = REPO_ROOT / "backend" / "config" / "pricing.yaml"
 
 
 class ConfigError(RuntimeError):
@@ -141,6 +142,14 @@ class LangfuseSettings(BaseSettings):
         return bool(self.host and self.public_key and self.secret_key.get_secret_value())
 
 
+class CostSettings(BaseSettings):
+    """用量成本估算：厂商单价表的位置。"""
+
+    model_config = _config("")
+
+    pricing_file: Path = DEFAULT_PRICING_FILE
+
+
 class ProvidersSettings(BaseModel):
     llm_front: LLMFrontSettings
     llm_eval: LLMEvalSettings
@@ -159,6 +168,7 @@ class Settings(BaseModel):
     observability: ObservabilitySettings
     langfuse: LangfuseSettings
     metrics: MetricsSettings
+    cost: CostSettings
 
 
 def _load[T: BaseSettings](cls: type[T], env_file: Path | None, missing: list[str]) -> T:
@@ -189,6 +199,7 @@ def load_settings(env_file: Path | None = DEFAULT_ENV_FILE) -> Settings:
     observability = _load(ObservabilitySettings, env_file, errors)
     langfuse = _load(LangfuseSettings, env_file, errors)
     metrics = _load(MetricsSettings, env_file, errors)
+    cost = _load(CostSettings, env_file, errors)
     if observability.enabled and not langfuse.configured:
         errors.append(
             "LANGFUSE_HOST / LANGFUSE_PUBLIC_KEY / LANGFUSE_SECRET_KEY"
@@ -212,6 +223,7 @@ def load_settings(env_file: Path | None = DEFAULT_ENV_FILE) -> Settings:
         observability=observability,
         langfuse=langfuse,
         metrics=metrics,
+        cost=cost,
     )
 
 

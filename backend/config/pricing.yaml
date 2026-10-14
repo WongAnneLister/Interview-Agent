@@ -1,0 +1,21 @@
+# 厂商单价表（observability/pricing.py 加载并校验，格式错误时启动即失败）。
+#
+# 单价以厂商官方价格页为准；填写时在 source 写上价格页链接，并在注释里写查询日期。
+# - price_cny：每 per 个计量单位的人民币价格；留空（null）表示未知，该项成本记为空并告警，不中断业务。
+# - per：计价基数，默认 1（例如按百万 token 计价写 1000000）。
+# - 计量单位（彼此不重叠，各按自己的单价计费）：
+#     input_tokens 未命中缓存的输入 / cached_tokens 命中缓存的输入 /
+#     output_tokens 不含推理的输出 / reasoning_tokens 推理 token /
+#     audio_seconds 音频秒数 / characters 字符数
+# - 同一 provider + model 可以有多条：按 effective_from（北京时间日期）取调用时已生效的最新一条，
+#   这一条整体替代更早的价格（未列出的单位视为缺价格）。
+prices: []
+# 示例：
+#  - provider: bailian
+#    model: <型号>
+#    effective_from: 2026-10-01
+#    source: <官方价格页链接>
+#    units:
+#      input_tokens: {price_cny: null, per: 1000000}
+#      cached_tokens: {price_cny: null, per: 1000000}
+#      output_tokens: {price_cny: null, per: 1000000}
