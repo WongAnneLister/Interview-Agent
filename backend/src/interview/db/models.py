@@ -7,6 +7,8 @@
   由数据库保证子表的 user_id 与所属面试一致；删除面试时子表级联删除。
 - 枚举存为 varchar + CHECK 约束（不用 PostgreSQL 原生枚举），增删取值只需改约束。
 - question_id、competency 指向 plans 里 JSON 中的 id，不建外键。
+- usage_events 是只追加的用量账本：不建 interview / turn 外键（删除面试不连带删除用量），
+  ORM 层禁止更新和删除。
 """
 
 from __future__ import annotations
@@ -14,6 +16,7 @@ from __future__ import annotations
 import enum
 import uuid
 from datetime import datetime
+from decimal import Decimal
 from typing import Any, ClassVar
 
 from sqlalchemy import (
@@ -24,13 +27,15 @@ from sqlalchemy import (
     ForeignKeyConstraint,
     Index,
     MetaData,
+    Numeric,
     String,
     Text,
     UniqueConstraint,
+    event,
     func,
 )
 from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy.orm import DeclarativeBase, Mapped, ORMExecuteState, Session, mapped_column
 from sqlalchemy.types import SmallInteger
 
 # 约束名固定可预测，Alembic 迁移里的名字不依赖数据库自动命名
@@ -98,6 +103,31 @@ class ReportStatus(enum.StrEnum):
     PENDING = "pending"
     READY = "ready"
     FAILED = "failed"
+
+
+class UsageRole(enum.StrEnum):
+    """产生用量的角色（谁调用了厂商）。"""
+
+    RESUME_PARSE = "resume_parse"
+    JD_PARSE = "jd_parse"
+    PLAN = "plan"
+    FRONT = "front"  # 前台面试官
+    EVAL = "eval"  # 面试中的实时评估
+    REPORT = "report"
+    ASR = "asr"
+    TTS = "tts"
+    EVAL_HARNESS = "eval_harness"  # 离线评测（模拟候选人、打分器）
+
+
+class UsageUnit(enum.StrEnum):
+    """计量单位，彼此不重叠：input 不含缓存命中部分，output 不含推理部分。"""
+
+    INPUT_TOKENS = "input_tokens"
+    OUTPUT_TOKENS = "output_tokens"
+    CACHED_TOKENS = "cached_tokens"
+    REASONING_TOKENS = "reasoning_tokens"
+    AUDIO_SECONDS = "audio_seconds"
+    CHARACTERS = "characters"
 
 
 def _enum_values(cls: type[enum.Enum]) -> list[str]:
@@ -293,3 +323,48 @@ class TurnMetric(UserOwned, Base):
     e2e_ms: Mapped[int | None]
     barge_in: Mapped[bool] = mapped_column(default=False, server_default="false")
     created_at: Mapped[datetime] = _created_at()
+
+
+class AppendOnlyError(RuntimeError):
+    """试图修改或删除只追加表中的记录。"""
+
+
+class UsageEvent(UserOwned, Base):
+    """一次厂商调用中一个计量单位的用量（只追加）。est_cost_cny 为空表示缺价格。"""
+
+    __tablename__ = "usage_events"
+    __table_args__ = (
+        CheckConstraint("quantity >= 0", name="quantity_non_negative"),
+        Index("ix_usage_events_user_id_created_at", "user_id", "created_at"),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    user_id: Mapped[uuid.UUID] = _owner_fk()
+    interview_id: Mapped[uuid.UUID | None] = mapped_column(index=True)
+    turn_id: Mapped[uuid.UUID | None] = mapped_column(index=True)
+    trace_id: Mapped[str | None] = mapped_column(String(32))
+    role: Mapped[UsageRole] = mapped_column(_enum(UsageRole, "usage_role"))
+    provider: Mapped[str] = mapped_column(String(64))
+    model: Mapped[str] = mapped_column(String(128))
+    unit: Mapped[UsageUnit] = mapped_column(_enum(UsageUnit, "usage_unit"))
+    quantity: Mapped[Decimal] = mapped_column(Numeric(18, 6))
+    est_cost_cny: Mapped[Decimal | None] = mapped_column(Numeric(18, 8))
+    is_eval: Mapped[bool] = mapped_column(default=False, server_default="false")
+    is_retry: Mapped[bool] = mapped_column(default=False, server_default="false")
+    is_fallback: Mapped[bool] = mapped_column(default=False, server_default="false")
+    created_at: Mapped[datetime] = _created_at()
+
+
+@event.listens_for(UsageEvent, "before_update")
+@event.listens_for(UsageEvent, "before_delete")
+def _reject_mutation(_mapper: Any, _conn: Any, target: UsageEvent) -> None:
+    raise AppendOnlyError(f"usage_events 只追加，不能修改或删除（id={target.id}）")
+
+
+@event.listens_for(Session, "do_orm_execute")
+def _reject_bulk_mutation(state: ORMExecuteState) -> None:
+    """ORM 批量 update() / delete() 不触发上面的 mapper 事件，单独拦截。"""
+    if (state.is_update or state.is_delete) and any(
+        m.class_ is UsageEvent for m in state.all_mappers
+    ):
+        raise AppendOnlyError("usage_events 只追加，不能修改或删除")

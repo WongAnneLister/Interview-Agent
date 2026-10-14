@@ -66,6 +66,7 @@ class LF:
     MODEL = "langfuse.observation.model.name"
     MODEL_PARAMETERS = "langfuse.observation.model.parameters"
     USAGE_DETAILS = "langfuse.observation.usage_details"
+    COST_DETAILS = "langfuse.observation.cost_details"
     COMPLETION_START_TIME = "langfuse.observation.completion_start_time"
     PROMPT_NAME = "langfuse.observation.prompt.name"
     PROMPT_VERSION = "langfuse.observation.prompt.version"
@@ -257,7 +258,7 @@ def set_llm_output(
     completion_start_time: datetime | None = None,
 ) -> None:
     """写入 generation 的输出、token 用量（键用 Langfuse 约定：input / output / total 等）
-    和首 token 时间。只写 span 属性，不记录用量表。"""
+    和首 token 时间。只写 span 属性，不记录用量表；之后调用 usage.record_usage() 会覆盖 usage。"""
     if output is not None:
         target.set_attribute(LF.OUTPUT, _to_json(output))
     if usage is not None:

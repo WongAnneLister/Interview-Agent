@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
+from decimal import Decimal
 
 import pytest
 from alembic import command
@@ -13,6 +14,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from interview.db.models import (
+    AppendOnlyError,
     Interview,
     InterviewStyle,
     InterviewType,
@@ -20,12 +22,17 @@ from interview.db.models import (
     Resume,
     Turn,
     TurnRole,
+    UsageEvent,
+    UsageRole,
+    UsageUnit,
     User,
 )
 from interview.db.repository import UserScopedRepository
 from interview.db.scope import bind_user
 from interview.db.seed import ensure_default_user
 from interview.db.session import make_sessionmaker
+from interview.observability.pricing import PriceTable
+from interview.observability.usage import record_usage
 
 pytestmark = pytest.mark.db
 
@@ -139,3 +146,38 @@ async def test_deleting_interview_cascades_to_children(engine: AsyncEngine) -> N
         await session.execute(delete(Interview).where(Interview.id == a.interview_id))
         await session.commit()
         assert await session.get(Turn, a.turn_id) is None
+
+
+async def test_usage_events_are_persisted_and_append_only(engine: AsyncEngine) -> None:
+    a = await _make_owner(engine, "a@test")
+    result = await record_usage(
+        user_id=a.user_id,
+        role=UsageRole.FRONT,
+        provider="bailian",
+        model="m",
+        quantities={UsageUnit.INPUT_TOKENS: 1200, UsageUnit.AUDIO_SECONDS: 3.25},
+        interview_id=a.interview_id,
+        turn_id=a.turn_id,
+        sessionmaker=make_sessionmaker(engine),
+        prices=PriceTable(),
+    )
+    assert result.persisted
+    async with _session_for(engine, a) as session:
+        rows = (await session.scalars(select(UsageEvent).order_by(UsageEvent.unit))).all()
+        assert [(r.unit, r.quantity, r.est_cost_cny) for r in rows] == [
+            (UsageUnit.AUDIO_SECONDS, Decimal("3.25"), None),
+            (UsageUnit.INPUT_TOKENS, Decimal(1200), None),
+        ]
+        rows[0].quantity = Decimal(0)
+        with pytest.raises(AppendOnlyError):
+            await session.flush()
+        await session.rollback()
+        await session.delete(rows[1])
+        with pytest.raises(AppendOnlyError):
+            await session.flush()
+        await session.rollback()
+
+        # 删除面试不连带删除用量（账本保留）
+        await session.execute(delete(Interview).where(Interview.id == a.interview_id))
+        await session.commit()
+        assert await session.scalar(select(func.count()).select_from(UsageEvent)) == 2
