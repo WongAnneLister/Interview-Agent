@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 
 from interview.observability.prometheus import (
     counter,
+    gauge,
     histogram,
     mount_metrics,
     start_metrics_server,
@@ -26,6 +27,8 @@ def test_register_is_idempotent() -> None:
     assert counter("test_idem_calls", "调用次数", ["role"]) is a
     h = histogram("test_idem_seconds", "耗时", buckets=[0.1, 1])
     assert histogram("test_idem_seconds", "耗时", buckets=[0.1, 1]) is h
+    g = gauge("test_idem_value", "当前值")
+    assert gauge("test_idem_value", "当前值") is g
 
 
 def test_register_conflict_raises() -> None:
@@ -34,6 +37,8 @@ def test_register_conflict_raises() -> None:
         counter("test_conflict", "x", ["provider"])
     with pytest.raises(ValueError):
         histogram("test_conflict", "x", ["role"])
+    with pytest.raises(ValueError):
+        gauge("test_conflict", "x", ["role"])
 
 
 def test_api_metrics_endpoint() -> None:

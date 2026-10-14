@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+from decimal import Decimal
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
@@ -143,11 +144,13 @@ class LangfuseSettings(BaseSettings):
 
 
 class CostSettings(BaseSettings):
-    """用量成本估算：厂商单价表的位置。"""
+    """用量成本估算与预算保护（金额单位：人民币元）。"""
 
     model_config = _config("")
 
     pricing_file: Path = DEFAULT_PRICING_FILE
+    max_cost_per_interview_cny: Decimal = Field(default=Decimal(5), gt=0)  # 单场预算
+    daily_budget_cny: Decimal = Field(default=Decimal(50), gt=0)  # 每日全部用户、不含评测
 
 
 class ProvidersSettings(BaseModel):
