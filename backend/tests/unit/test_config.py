@@ -23,7 +23,18 @@ def clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
     """不受开发者 shell 里已有变量的影响。"""
     for name in REQUIRED:
         monkeypatch.delenv(name, raising=False)
-    for name in ("APP_ENV", "LOG_LEVEL", "LOG_FORMAT", "LLM_FRONT_MODEL", "LLM_FRONT_PROVIDER"):
+    for name in (
+        "APP_ENV",
+        "LOG_LEVEL",
+        "LOG_FORMAT",
+        "LLM_FRONT_MODEL",
+        "LLM_FRONT_PROVIDER",
+        "OBSERVABILITY_ENABLED",
+        "OBSERVABILITY_SAMPLE_RATIO",
+        "LANGFUSE_HOST",
+        "LANGFUSE_PUBLIC_KEY",
+        "LANGFUSE_SECRET_KEY",
+    ):
         monkeypatch.delenv(name, raising=False)
 
 
@@ -106,3 +117,31 @@ def test_get_settings_is_cached(monkeypatch: pytest.MonkeyPatch) -> None:
         assert get_settings() is get_settings()
     finally:
         get_settings.cache_clear()
+
+
+def test_observability_off_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    set_required(monkeypatch)
+    settings = load_settings(env_file=None)
+    assert settings.observability.enabled is False
+    assert settings.observability.sample_ratio == 1.0
+    assert not settings.langfuse.configured
+
+
+def test_observability_enabled_requires_langfuse(monkeypatch: pytest.MonkeyPatch) -> None:
+    set_required(monkeypatch)
+    monkeypatch.setenv("OBSERVABILITY_ENABLED", "true")
+    monkeypatch.setenv("LANGFUSE_HOST", "http://127.0.0.1:23100")
+    with pytest.raises(ConfigError, match="LANGFUSE_SECRET_KEY"):
+        load_settings(env_file=None)
+    monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "pk-lf-1")
+    monkeypatch.setenv("LANGFUSE_SECRET_KEY", "sk-lf-1")
+    settings = load_settings(env_file=None)
+    assert settings.langfuse.configured
+    assert "sk-lf-1" not in repr(settings)
+
+
+def test_sample_ratio_out_of_range(monkeypatch: pytest.MonkeyPatch) -> None:
+    set_required(monkeypatch)
+    monkeypatch.setenv("OBSERVABILITY_SAMPLE_RATIO", "1.5")
+    with pytest.raises(ConfigError, match="OBSERVABILITY_SAMPLE_RATIO"):
+        load_settings(env_file=None)
