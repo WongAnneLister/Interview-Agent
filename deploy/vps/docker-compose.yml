@@ -1,4 +1,7 @@
 # VPS 上的开发依赖：Postgres、Redis、S3 兼容对象存储（SeaweedFS）、Prometheus、Grafana。
+# Prometheus、Grafana 放在 observability profile 里，用 make obs-up / make obs-down 单独启停；
+# make vps-deploy 只管核心服务。Langfuse 运行在本机（deploy/local/docker-compose.yml），
+# 这台 VPS 内存不够跑 ClickHouse。
 # 安全约定：所有端口只绑定 127.0.0.1，本机通过 scripts/tunnel.sh 的 SSH 隧道访问，不对公网开放。
 # 资源约定：这台 VPS 上还有其它项目，每个服务都设置内存上限，避免挤占它们。
 # 密码等变量来自同目录的 .env（由 init-env.sh 在服务器上随机生成，不进仓库）。
@@ -103,6 +106,7 @@ services:
   prometheus:
     image: prom/prometheus:latest
     container_name: interview-agent-prometheus
+    profiles: [observability]
     restart: unless-stopped
     network_mode: host
     command:
@@ -119,6 +123,7 @@ services:
   grafana:
     image: grafana/grafana-oss:latest
     container_name: interview-agent-grafana
+    profiles: [observability]
     restart: unless-stopped
     network_mode: host
     environment:

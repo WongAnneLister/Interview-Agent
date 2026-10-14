@@ -37,3 +37,6 @@ Thumbs.db
 
 # 本机工具（如 LiveKit Server 可执行文件），由 scripts/fetch-*.sh 下载
 .tools/
+
+# 本机 Langfuse 的 SeaweedFS 凭证（由 scripts/langfuse-local-init.sh 生成）
+deploy/local/s3.json
