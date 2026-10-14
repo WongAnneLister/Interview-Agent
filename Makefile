@@ -5,7 +5,7 @@
 BACKEND := backend
 UV := uv run --directory $(BACKEND)
 
-.PHONY: help install fmt lint typecheck test check test-live hooks \
+.PHONY: help install fmt lint typecheck test check test-live hooks obs-smoke \
 	vps-deploy vps-env vps-ps vps-logs obs-up obs-down tunnel check-env fetch-livekit livekit
 
 help:
@@ -16,6 +16,7 @@ help:
 	@echo "test       单元测试（不含 live 测试）"
 	@echo "check      lint + typecheck + test（合并前必须通过）"
 	@echo "test-live  调用真实厂商的测试（需要 .env，手动运行）"
+	@echo "obs-smoke  发送一条示例链路到 Langfuse 并暴露示例指标（需要隧道和 obs-up）"
 	@echo "vps-deploy 部署 / 更新 VPS 上的开发依赖（可重复执行）"
 	@echo "obs-up     启动可观测性服务（本机 Langfuse + VPS 上的 Prometheus、Grafana）"
 	@echo "obs-down   停止可观测性服务（数据保留，不影响核心服务）"
@@ -52,6 +53,9 @@ check: lint typecheck test
 
 test-live:
 	$(UV) pytest -m live
+
+obs-smoke:
+	$(UV) python tools/obs_smoke.py
 
 vps-deploy:
 	bash scripts/vps-deploy.sh

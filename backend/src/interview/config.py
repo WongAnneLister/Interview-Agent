@@ -115,6 +115,15 @@ class ObservabilitySettings(BaseSettings):
     sample_ratio: float = Field(default=1.0, ge=0.0, le=1.0)  # 按 trace 采样的比例
 
 
+class MetricsSettings(BaseSettings):
+    """worker 和评测进程独立的 Prometheus 指标端口（API 的 /metrics 挂在 API 自身端口上）。"""
+
+    model_config = _config("")
+
+    worker_metrics_port: int = Field(default=9465, gt=0, lt=65536)
+    eval_metrics_port: int = Field(default=9466, gt=0, lt=65536)
+
+
 class LangfuseSettings(BaseSettings):
     """自部署 Langfuse（OTLP 接收端）。OBSERVABILITY_ENABLED=true 时三项必填。"""
 
@@ -146,6 +155,7 @@ class Settings(BaseModel):
     providers: ProvidersSettings
     observability: ObservabilitySettings
     langfuse: LangfuseSettings
+    metrics: MetricsSettings
 
 
 def _load[T: BaseSettings](cls: type[T], env_file: Path | None, missing: list[str]) -> T:
@@ -175,6 +185,7 @@ def load_settings(env_file: Path | None = DEFAULT_ENV_FILE) -> Settings:
     tts = _load(TTSSettings, env_file, errors)
     observability = _load(ObservabilitySettings, env_file, errors)
     langfuse = _load(LangfuseSettings, env_file, errors)
+    metrics = _load(MetricsSettings, env_file, errors)
     if observability.enabled and not langfuse.configured:
         errors.append(
             "LANGFUSE_HOST / LANGFUSE_PUBLIC_KEY / LANGFUSE_SECRET_KEY"
@@ -197,6 +208,7 @@ def load_settings(env_file: Path | None = DEFAULT_ENV_FILE) -> Settings:
         ),
         observability=observability,
         langfuse=langfuse,
+        metrics=metrics,
     )
 
 

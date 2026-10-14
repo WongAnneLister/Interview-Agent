@@ -68,6 +68,8 @@ make obs-down     # 不用时停止（数据保留）
 ssh -p <端口> root@<VPS> "docker pull -q --platform linux/arm64 langfuse/langfuse:4 && docker save --platform linux/arm64 langfuse/langfuse:4 | gzip" | gunzip | docker load
 ```
 
+验证整条链路：`.env` 中设置 `OBSERVABILITY_ENABLED=true` 后运行 `make obs-smoke`，脚本会发送一条示例链路（HTTP 请求 → 数据库查询 → 大模型 generation），并打印 Langfuse 里这条链路的地址；同时在 `EVAL_METRICS_PORT` 上暴露 `interview_smoke_total` 等指标 60 秒，可在 Grafana 的 Explore 里查到。
+
 Langfuse 首次启动时会自动创建组织 `Interview Agent`、项目 `interview-agent-dev` 和该项目的 API 密钥（即 `.env` 中的 `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY`），无需在网页上手动创建。Grafana 已自动配置 Prometheus 数据源。本机 API、语音 worker、评测进程没运行时，Prometheus 里对应的目标显示为 down，属于正常现象。
 
 ### LiveKit（本机运行）
