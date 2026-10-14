@@ -37,7 +37,10 @@ make vps-deploy   # 部署或更新 VPS 上的依赖（首次会在服务器上�
 make vps-env      # 把连接信息写入本机 .env（不显示密码）
 make tunnel       # 建立 SSH 隧道，开发时保持运行
 make check-env    # 检查各依赖是否可用
+make migrate      # 把数据库迁移到最新版本
 ```
+
+改了 `backend/src/interview/db/models.py` 之后，用 `make migration name=add_xxx` 生成迁移，人工检查后再 `make migrate`。
 
 隧道建立后：Postgres `127.0.0.1:25432`，Redis `:26379`，S3 `http://127.0.0.1:29000`（文件浏览 `http://127.0.0.1:29001`）。
 
