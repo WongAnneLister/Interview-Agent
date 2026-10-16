@@ -78,7 +78,7 @@ class S3Settings(BaseSettings):
     bucket_resumes: str = "resumes"
 
 
-class _ProviderRoleSettings(BaseSettings):
+class ProviderRoleSettings(BaseSettings):
     """某个角色使用的厂商。型号和地址不设默认值，空字符串表示该角色尚未配置。"""
 
     provider: str = ""
@@ -91,23 +91,23 @@ class _ProviderRoleSettings(BaseSettings):
         return bool(self.provider and self.model)
 
 
-class LLMFrontSettings(_ProviderRoleSettings):
+class LLMFrontSettings(ProviderRoleSettings):
     model_config = _config("LLM_FRONT_")
 
 
-class LLMEvalSettings(_ProviderRoleSettings):
+class LLMEvalSettings(ProviderRoleSettings):
     model_config = _config("LLM_EVAL_")
 
 
-class LLMFallbackSettings(_ProviderRoleSettings):
+class LLMFallbackSettings(ProviderRoleSettings):
     model_config = _config("LLM_FALLBACK_")
 
 
-class STTSettings(_ProviderRoleSettings):
+class STTSettings(ProviderRoleSettings):
     model_config = _config("STT_")
 
 
-class TTSSettings(_ProviderRoleSettings):
+class TTSSettings(ProviderRoleSettings):
     model_config = _config("TTS_")
 
 

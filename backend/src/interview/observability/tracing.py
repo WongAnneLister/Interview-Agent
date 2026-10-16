@@ -31,7 +31,7 @@ from opentelemetry.sdk.trace import Span as SdkSpan
 from opentelemetry.sdk.trace import SpanProcessor, TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor, SimpleSpanProcessor, SpanExporter
 from opentelemetry.sdk.trace.sampling import ALWAYS_OFF, ParentBased, TraceIdRatioBased
-from opentelemetry.trace import Span, Tracer
+from opentelemetry.trace import Span, Status, StatusCode, Tracer
 from opentelemetry.util.types import AttributeValue
 
 from interview.config import LangfuseSettings, ObservabilitySettings
@@ -177,6 +177,36 @@ def span(
 
     interview_id、is_eval 会传给块内开始的所有子 span。
     """
+    own, inherited = _span_attributes(
+        interview_id=interview_id,
+        turn_id=turn_id,
+        role=role,
+        provider=provider,
+        model=model,
+        is_eval=is_eval,
+        observation_type=observation_type,
+        attrs=attrs,
+    )
+    token = _inherited.set(inherited)
+    try:
+        with _tracer().start_as_current_span(name, attributes=own) as current:
+            yield current
+    finally:
+        _inherited.reset(token)
+
+
+def _span_attributes(
+    *,
+    interview_id: str | None,
+    turn_id: str | None,
+    role: str | None,
+    provider: str | None,
+    model: str | None,
+    is_eval: bool | None,
+    observation_type: ObservationType,
+    attrs: Mapping[str, AttributeValue],
+) -> tuple[dict[str, AttributeValue], dict[str, AttributeValue]]:
+    """返回 (span 自身的属性, 传给子 span 的继承属性)。"""
     inherited = dict(_inherited.get())
     if interview_id is not None:
         inherited[Attr.INTERVIEW_ID] = interview_id
@@ -199,13 +229,89 @@ def span(
     if model is not None:
         own[Attr.MODEL] = model
     own.update(attrs)
+    return own, inherited
 
-    token = _inherited.set(inherited)
-    try:
-        with _tracer().start_as_current_span(name, attributes=own) as current:
-            yield current
-    finally:
-        _inherited.reset(token)
+
+class OpenSpan:
+    """不设为当前 span 的 span，用于跨越多次 await / yield 的流式调用。
+
+    在 async generator 里直接用 span() 会让它在挂起期间一直是调用方的当前 span，
+    所以改为每次取值时用 activate() 临时激活（子 span 挂在它下面、继承 interview_id），
+    结束时调用 end()。
+    """
+
+    def __init__(self, target: Span, inherited: Mapping[str, AttributeValue]) -> None:
+        self.span = target
+        self._inherited = MappingProxyType(dict(inherited))
+        self._ended = False
+
+    @contextmanager
+    def activate(self) -> Generator[Span]:
+        token = _inherited.set(self._inherited)
+        try:
+            with trace.use_span(
+                self.span, end_on_exit=False, record_exception=False, set_status_on_exception=False
+            ):
+                yield self.span
+        finally:
+            _inherited.reset(token)
+
+    def end(self, error: BaseException | None = None) -> None:
+        """结束 span；有 error 时记录异常并把状态设为 ERROR（与 span() 一致）。可重复调用。"""
+        if self._ended:
+            return
+        self._ended = True
+        if error is not None:
+            self.span.record_exception(error)
+            self.span.set_status(Status(StatusCode.ERROR, f"{type(error).__name__}: {error}"))
+        self.span.end()
+
+
+def open_span(
+    name: str,
+    *,
+    interview_id: str | None = None,
+    turn_id: str | None = None,
+    role: str | None = None,
+    provider: str | None = None,
+    model: str | None = None,
+    is_eval: bool | None = None,
+    observation_type: ObservationType = "span",
+    **attrs: AttributeValue,
+) -> OpenSpan:
+    """与 span() 参数和属性相同，但只开始、不设为当前 span；父 span 取调用时的当前 span。"""
+    own, inherited = _span_attributes(
+        interview_id=interview_id,
+        turn_id=turn_id,
+        role=role,
+        provider=provider,
+        model=model,
+        is_eval=is_eval,
+        observation_type=observation_type,
+        attrs=attrs,
+    )
+    return OpenSpan(_tracer().start_span(name, attributes=own), inherited)
+
+
+def llm_attributes(
+    model: str,
+    *,
+    input: Any = None,
+    model_parameters: Mapping[str, Any] | None = None,
+    prompt_name: str | None = None,
+    prompt_version: int | None = None,
+) -> dict[str, AttributeValue]:
+    """generation 专有的属性（型号、输入、参数、提示词版本），供 llm_span() 和 open_span() 使用。"""
+    attrs: dict[str, AttributeValue] = {LF.MODEL: model, "gen_ai.request.model": model}
+    if input is not None:
+        attrs[LF.INPUT] = _to_json(input)
+    if model_parameters is not None:
+        attrs[LF.MODEL_PARAMETERS] = _to_json(model_parameters)
+    if prompt_name is not None:
+        attrs[LF.PROMPT_NAME] = prompt_name
+    if prompt_version is not None:
+        attrs[LF.PROMPT_VERSION] = prompt_version
+    return attrs
 
 
 @contextmanager
@@ -227,15 +333,13 @@ def llm_span(
 
     输出和 token 用 set_llm_output() 写入；用量入库与成本由 observability/usage.py 负责。
     """
-    attrs: dict[str, AttributeValue] = {LF.MODEL: model, "gen_ai.request.model": model}
-    if input is not None:
-        attrs[LF.INPUT] = _to_json(input)
-    if model_parameters is not None:
-        attrs[LF.MODEL_PARAMETERS] = _to_json(model_parameters)
-    if prompt_name is not None:
-        attrs[LF.PROMPT_NAME] = prompt_name
-    if prompt_version is not None:
-        attrs[LF.PROMPT_VERSION] = prompt_version
+    attrs = llm_attributes(
+        model,
+        input=input,
+        model_parameters=model_parameters,
+        prompt_name=prompt_name,
+        prompt_version=prompt_version,
+    )
     with span(
         name,
         interview_id=interview_id,
