@@ -6,9 +6,19 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
-from interview.config import load_settings
+from interview.config import (
+    DEFAULT_ENV_FILE,
+    BailianSettings,
+    DeepSeekSettings,
+    LLMEvalSettings,
+    LLMFallbackSettings,
+    LLMFrontSettings,
+    ProvidersSettings,
+)
 from interview.providers.base import ChatMessage
 from interview.providers.registry import ProviderNotConfigured, default_factories
 
@@ -18,10 +28,25 @@ MESSAGES: list[ChatMessage] = [
 ]
 
 
+def provider_settings() -> ProvidersSettings:
+    """只读取大模型相关配置：live 测试不需要数据库、LiveKit、对象存储等其他必填项。"""
+
+    def read(cls: type[Any]) -> Any:
+        return cls(_env_file=DEFAULT_ENV_FILE)
+
+    return ProvidersSettings.model_construct(
+        llm_front=read(LLMFrontSettings),
+        llm_eval=read(LLMEvalSettings),
+        llm_fallback=read(LLMFallbackSettings),
+        bailian=read(BailianSettings),
+        deepseek=read(DeepSeekSettings),
+    )
+
+
 @pytest.mark.live
 @pytest.mark.parametrize("slot", ["llm_front", "llm_eval", "llm_fallback"])
 async def test_stream_chat(slot: str, capsys: pytest.CaptureFixture[str]) -> None:
-    settings = load_settings().providers
+    settings = provider_settings()
     role = getattr(settings, slot)
     factory = default_factories(settings).llm.get(role.provider)
     if not role.configured or factory is None:
