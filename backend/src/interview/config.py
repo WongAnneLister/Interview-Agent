@@ -125,6 +125,9 @@ class VendorSettings(BaseSettings):
 class BailianSettings(VendorSettings):
     model_config = _config("BAILIAN_")
 
+    # 原生 API 地址（热词表等非 OpenAI 兼容接口），与 BASE_URL（OpenAI 兼容地址）不同
+    api_base_url: str = ""
+
 
 class DeepSeekSettings(VendorSettings):
     model_config = _config("DEEPSEEK_")

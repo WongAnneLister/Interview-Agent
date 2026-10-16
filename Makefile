@@ -5,7 +5,7 @@
 BACKEND := backend
 UV := uv run --directory $(BACKEND)
 
-.PHONY: help install fmt lint typecheck test check test-live hooks obs-smoke migrate migration seed test-db cost \
+.PHONY: help install fmt lint typecheck test check test-live hooks obs-smoke migrate migration seed test-db cost hotwords \
 	vps-deploy vps-env vps-ps vps-logs obs-up obs-down tunnel check-env fetch-livekit livekit
 
 help:
@@ -21,6 +21,7 @@ help:
 	@echo "seed       创建本地用户并把 id 写入 .env 的 DEFAULT_USER_ID（需要隧道，先 migrate）"
 	@echo "test-db    数据库集成测试：建临时库、跑迁移和测试、结束后删除（需要隧道）"
 	@echo "cost       一场面试的成本拆解：make cost id=<面试ID>（需要隧道）"
+	@echo "hotwords   从文本文件创建百炼热词表并打印 id：make hotwords file=words.txt prefix=xxx"
 	@echo "obs-smoke  发送一条示例链路到 Langfuse 并暴露示例指标（需要隧道和 obs-up）"
 	@echo "vps-deploy 部署 / 更新 VPS 上的开发依赖（可重复执行）"
 	@echo "obs-up     启动可观测性服务（本机 Langfuse + VPS 上的 Prometheus、Grafana）"
@@ -75,6 +76,10 @@ test-db:
 cost:
 	@test -n "$(id)" || { echo "用法：make cost id=<面试ID>"; exit 1; }
 	$(UV) python tools/cost_report.py $(id)
+
+hotwords:
+	@test -n "$(file)" -a -n "$(prefix)" || { echo "用法：make hotwords file=words.txt prefix=xxx"; exit 1; }
+	$(UV) python tools/create_hotwords.py $(abspath $(file)) --prefix $(prefix)
 
 obs-smoke:
 	$(UV) python tools/obs_smoke.py
