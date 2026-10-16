@@ -10,7 +10,7 @@ from __future__ import annotations
 from decimal import Decimal
 from functools import lru_cache
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, Field, SecretStr, ValidationError
@@ -83,8 +83,10 @@ class ProviderRoleSettings(BaseSettings):
 
     provider: str = ""
     model: str = ""
-    base_url: str = ""
+    base_url: str = ""  # 留空时用厂商级的 <厂商>_BASE_URL
     timeout_s: float = Field(default=30.0, gt=0)
+    # 透传给厂商的非标准参数（JSON），如百炼的 enable_thinking；与调用时的 extra 合并，调用时优先
+    extra_body: dict[str, Any] = Field(default_factory=dict[str, Any])
 
     @property
     def configured(self) -> bool:
@@ -94,6 +96,9 @@ class ProviderRoleSettings(BaseSettings):
 class LLMFrontSettings(ProviderRoleSettings):
     model_config = _config("LLM_FRONT_")
 
+    # 前台要低延迟，默认关闭思考（百炼参数）；配置了 LLM_FRONT_EXTRA_BODY 时整体替换
+    extra_body: dict[str, Any] = Field(default_factory=lambda: {"enable_thinking": False})
+
 
 class LLMEvalSettings(ProviderRoleSettings):
     model_config = _config("LLM_EVAL_")
@@ -101,6 +106,28 @@ class LLMEvalSettings(ProviderRoleSettings):
 
 class LLMFallbackSettings(ProviderRoleSettings):
     model_config = _config("LLM_FALLBACK_")
+
+    # 备用计划用 DeepSeek（默认开启思考），备用时优先保证延迟，默认关闭（DeepSeek 参数）
+    extra_body: dict[str, Any] = Field(default_factory=lambda: {"thinking": {"type": "disabled"}})
+
+
+class VendorSettings(BaseSettings):
+    """厂商级的密钥和默认接口地址，多个角色共用（同一个百炼密钥也用于识别和合成）。"""
+
+    api_key: SecretStr = SecretStr("")
+    base_url: str = ""
+
+    @property
+    def configured(self) -> bool:
+        return bool(self.api_key.get_secret_value())
+
+
+class BailianSettings(VendorSettings):
+    model_config = _config("BAILIAN_")
+
+
+class DeepSeekSettings(VendorSettings):
+    model_config = _config("DEEPSEEK_")
 
 
 class STTSettings(ProviderRoleSettings):
@@ -159,6 +186,8 @@ class ProvidersSettings(BaseModel):
     llm_fallback: LLMFallbackSettings
     stt: STTSettings
     tts: TTSSettings
+    bailian: BailianSettings = Field(default_factory=lambda: BailianSettings.model_construct())
+    deepseek: DeepSeekSettings = Field(default_factory=lambda: DeepSeekSettings.model_construct())
 
 
 class Settings(BaseModel):
@@ -199,6 +228,8 @@ def load_settings(env_file: Path | None = DEFAULT_ENV_FILE) -> Settings:
     llm_fallback = _load(LLMFallbackSettings, env_file, errors)
     stt = _load(STTSettings, env_file, errors)
     tts = _load(TTSSettings, env_file, errors)
+    bailian = _load(BailianSettings, env_file, errors)
+    deepseek = _load(DeepSeekSettings, env_file, errors)
     observability = _load(ObservabilitySettings, env_file, errors)
     langfuse = _load(LangfuseSettings, env_file, errors)
     metrics = _load(MetricsSettings, env_file, errors)
@@ -222,6 +253,8 @@ def load_settings(env_file: Path | None = DEFAULT_ENV_FILE) -> Settings:
             llm_fallback=llm_fallback,
             stt=stt,
             tts=tts,
+            bailian=bailian,
+            deepseek=deepseek,
         ),
         observability=observability,
         langfuse=langfuse,

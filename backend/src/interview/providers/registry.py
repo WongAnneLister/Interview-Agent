@@ -1,6 +1,7 @@
 """按配置里的角色（llm_front、llm_eval、stt、tts）创建厂商实例。
 
-- 每个角色的 PROVIDER 名字通过工厂表找到实现；本 PR 只有 "fake"，真实厂商在 PR-07 起注册。
+- 每个角色的 PROVIDER 名字通过工厂表找到实现：fake、bailian、deepseek
+  （识别与合成的真实厂商在 PR-08 / 09 注册）。
 - 底层适配器每个角色只建一次（首次取用时），以便复用连接；每次取实例都用调用方的
   CallContext 新包一层观测包装（很轻），interview_id、turn_id 在这时绑定。
 - LLM 主 + 备：配置了 LLM_FALLBACK_* 时，主实例抛 Timeout / Unavailable / RateLimited 就切到备用，
@@ -18,7 +19,7 @@ from typing import Any, Literal, Self
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from interview.config import ConfigError, ProviderRoleSettings, ProvidersSettings
+from interview.config import ConfigError, ProviderRoleSettings, ProvidersSettings, VendorSettings
 from interview.observability.pricing import PriceTable
 from interview.providers.base import (
     FAILOVER_ERRORS,
@@ -40,8 +41,15 @@ from interview.providers.observed import (
     Observer,
     Slot,
 )
+from interview.providers.openai_compat import OpenAICompatLLM
 
-__all__ = ["CallContext", "ProviderFactories", "ProviderNotConfigured", "ProviderRegistry"]
+__all__ = [
+    "CallContext",
+    "ProviderFactories",
+    "ProviderNotConfigured",
+    "ProviderRegistry",
+    "default_factories",
+]
 
 LLMSlot = Literal["llm_front", "llm_eval"]
 
@@ -67,6 +75,42 @@ class ProviderFactories:
     )
 
 
+def openai_compat_factory(
+    provider: str, vendor: VendorSettings
+) -> Callable[[ProviderRoleSettings], LLMProvider]:
+    """OpenAI 兼容厂商的工厂：密钥取厂商级配置，地址优先用角色配置的 BASE_URL。"""
+    prefix = provider.upper()
+
+    def create(role: ProviderRoleSettings) -> LLMProvider:
+        base_url = role.base_url or vendor.base_url
+        if not vendor.configured or not base_url:
+            raise ProviderNotConfigured(f"{prefix}_API_KEY / {prefix}_BASE_URL 未配置")
+        return OpenAICompatLLM(
+            provider=provider,
+            model=role.model,
+            api_key=vendor.api_key.get_secret_value(),
+            base_url=base_url,
+            timeout_s=role.timeout_s,
+            extra_body=role.extra_body,
+        )
+
+    return create
+
+
+def default_factories(settings: ProvidersSettings) -> ProviderFactories:
+    """生产用的工厂表：假实现 + 已接入的真实厂商。"""
+    fakes = ProviderFactories()
+    return ProviderFactories(
+        llm={
+            **fakes.llm,
+            "bailian": openai_compat_factory("bailian", settings.bailian),
+            "deepseek": openai_compat_factory("deepseek", settings.deepseek),
+        },
+        stt=fakes.stt,
+        tts=fakes.tts,
+    )
+
+
 class ProviderRegistry:
     def __init__(
         self,
@@ -77,7 +121,7 @@ class ProviderRegistry:
         prices: PriceTable | None = None,
     ) -> None:
         self._settings = settings
-        self._factories = factories or ProviderFactories()
+        self._factories = factories or default_factories(settings)
         self._sessionmaker = sessionmaker
         self._prices = prices
         self._llms: dict[Slot, LLMProvider] = {}

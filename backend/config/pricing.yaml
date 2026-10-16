@@ -9,7 +9,42 @@
 #     audio_seconds 音频秒数 / characters 字符数
 # - 同一 provider + model 可以有多条：按 effective_from（北京时间日期）取调用时已生效的最新一条，
 #   这一条整体替代更早的价格（未列出的单位视为缺价格）。
-prices: []
+prices:
+  # 百炼：查询于 2026-10-16，华北2（北京）部署范围。
+  # - qwen3.8 的输入单价不分阶梯（单次输入 ≤1M token），思考与非思考模式单价相同，思考 token 按输出计价。
+  # - qwen3.8-flash / qwen3.8-max 的隐式缓存命中单价官方页未公开（上下文缓存文档写明“请参见百炼控制台”），
+  #   这里暂按输入单价保守估计（成本偏高，不会让预算保护漏报）；在控制台确认后新增一条更正。
+  - provider: bailian
+    model: qwen3.8-flash
+    effective_from: 2026-10-16
+    source: https://help.aliyun.com/zh/model-studio/model-pricing
+    units:
+      input_tokens: {price_cny: 0.8, per: 1000000}
+      cached_tokens: {price_cny: 0.8, per: 1000000}
+      output_tokens: {price_cny: 2.7, per: 1000000}
+      reasoning_tokens: {price_cny: 2.7, per: 1000000}
+  - provider: bailian
+    model: qwen3.8-max
+    effective_from: 2026-10-16
+    source: https://help.aliyun.com/zh/model-studio/model-pricing
+    units:
+      input_tokens: {price_cny: 12, per: 1000000}
+      cached_tokens: {price_cny: 12, per: 1000000}
+      output_tokens: {price_cny: 36, per: 1000000}
+      reasoning_tokens: {price_cny: 36, per: 1000000}
+  # DeepSeek：查询于 2026-10-16（中文价格页，人民币）。
+  # - 分高峰（北京时间工作日 9:00–12:00、14:00–18:00）和空闲时段，空闲为半价；
+  #   单价表不支持按时段计价，一律按高峰价估计（成本偏高）。
+  # - deepseek-flash 对应 DeepSeek-V4.1-Flash；思考 token 按输出计价。
+  - provider: deepseek
+    model: deepseek-flash
+    effective_from: 2026-10-16
+    source: https://api-docs.deepseek.com/zh-cn/quick_start/pricing
+    units:
+      input_tokens: {price_cny: 2, per: 1000000}
+      cached_tokens: {price_cny: 0.04, per: 1000000}
+      output_tokens: {price_cny: 8, per: 1000000}
+      reasoning_tokens: {price_cny: 8, per: 1000000}
 # 示例：
 #  - provider: bailian
 #    model: <型号>
