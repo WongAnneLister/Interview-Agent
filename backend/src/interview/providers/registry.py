@@ -1,7 +1,7 @@
 """按配置里的角色（llm_front、llm_eval、stt、tts）创建厂商实例。
 
 - 每个角色的 PROVIDER 名字通过工厂表找到实现：fake、bailian、deepseek
-  （识别与合成的真实厂商在 PR-08 / 09 注册）。
+  （识别：fake、bailian；合成的真实厂商在 PR-09 注册）。
 - 底层适配器每个角色只建一次（首次取用时），以便复用连接；每次取实例都用调用方的
   CallContext 新包一层观测包装（很轻），interview_id、turn_id 在这时绑定。
 - LLM 主 + 备：配置了 LLM_FALLBACK_* 时，主实例抛 Timeout / Unavailable / RateLimited 就切到备用，
@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from interview.config import ConfigError, ProviderRoleSettings, ProvidersSettings, VendorSettings
 from interview.observability.pricing import PriceTable
+from interview.providers.bailian_asr import BailianASR
 from interview.providers.base import (
     FAILOVER_ERRORS,
     ChatMessage,
@@ -97,6 +98,23 @@ def openai_compat_factory(
     return create
 
 
+def bailian_asr_factory(vendor: VendorSettings) -> Callable[[ProviderRoleSettings], STTProvider]:
+    """百炼流式识别：密钥取 BAILIAN_API_KEY，WebSocket 地址必须在 STT_BASE_URL 配置。"""
+
+    def create(role: ProviderRoleSettings) -> STTProvider:
+        if not vendor.configured or not role.base_url:
+            raise ProviderNotConfigured("BAILIAN_API_KEY / STT_BASE_URL 未配置")
+        return BailianASR(
+            model=role.model,
+            api_key=vendor.api_key.get_secret_value(),
+            url=role.base_url,
+            timeout_s=role.timeout_s,
+            extra_params=role.extra_body,
+        )
+
+    return create
+
+
 def default_factories(settings: ProvidersSettings) -> ProviderFactories:
     """生产用的工厂表：假实现 + 已接入的真实厂商。"""
     fakes = ProviderFactories()
@@ -106,7 +124,7 @@ def default_factories(settings: ProvidersSettings) -> ProviderFactories:
             "bailian": openai_compat_factory("bailian", settings.bailian),
             "deepseek": openai_compat_factory("deepseek", settings.deepseek),
         },
-        stt=fakes.stt,
+        stt={**fakes.stt, "bailian": bailian_asr_factory(settings.bailian)},
         tts=fakes.tts,
     )
 
