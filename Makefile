@@ -67,7 +67,8 @@ test-live:
 API_PORT ?= 8000
 
 api:
-	$(UV) uvicorn interview.api.app:create_app --factory --reload --host 127.0.0.1 --port $(API_PORT)
+	# 关掉 uvicorn 自带的纯文本访问日志：中间件已经输出带 trace_id 的 JSON 访问日志
+	$(UV) uvicorn interview.api.app:create_app --factory --reload --no-access-log --host 127.0.0.1 --port $(API_PORT)
 
 migrate:
 	$(UV) alembic upgrade head
