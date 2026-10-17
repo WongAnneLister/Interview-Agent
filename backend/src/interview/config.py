@@ -45,6 +45,8 @@ class AppSettings(BaseSettings):
     default_user_id: UUID | None = None
     # 允许跨域访问 API 的前端地址（JSON 数组，如 ["http://localhost:3000"]）；为空时不允许任何跨域请求
     web_origins: list[str] = Field(default_factory=list[str])
+    # /readyz 每项依赖检查的超时（秒）；经 SSH 隧道连 VPS 时新建连接要 10 秒左右，开发时调大
+    ready_check_timeout_s: float = Field(default=3.0, gt=0)
 
 
 class DatabaseSettings(BaseSettings):

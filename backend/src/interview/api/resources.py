@@ -20,7 +20,6 @@ from interview.observability.instrument import instrument_sqlalchemy
 from interview.providers.registry import ProviderRegistry
 
 REDIS_TIMEOUT_S = 5
-READY_CHECK_TIMEOUT_S = 3
 
 type ReadyCheck = Callable[[], Awaitable[object]]
 
@@ -42,11 +41,12 @@ class Resources:
             await self.engine.dispose()
 
     async def readiness(self) -> dict[str, str]:
-        """逐项检查依赖，返回 {名称: "ok" 或错误类型}；每项最多等 READY_CHECK_TIMEOUT_S 秒。"""
+        """逐项检查依赖，返回 {名称: "ok" 或错误类型}；每项的超时取配置 READY_CHECK_TIMEOUT_S。"""
+        timeout_s = self.settings.app.ready_check_timeout_s
 
         async def run(check: ReadyCheck) -> str:
             try:
-                async with asyncio.timeout(READY_CHECK_TIMEOUT_S):
+                async with asyncio.timeout(timeout_s):
                     await check()
             except TimeoutError:
                 return "timeout"
@@ -69,10 +69,11 @@ def create_resources(settings: Settings) -> Resources:
     engine = create_engine(settings.db.url.get_secret_value())
     instrument_sqlalchemy(engine, enabled=settings.observability.enabled)
     sessionmaker = make_sessionmaker(engine)
+    redis_timeout_s = max(REDIS_TIMEOUT_S, settings.app.ready_check_timeout_s)
     redis: Redis = Redis.from_url(  # pyright: ignore[reportUnknownMemberType]
         settings.redis.url.get_secret_value(),
-        socket_timeout=REDIS_TIMEOUT_S,
-        socket_connect_timeout=REDIS_TIMEOUT_S,
+        socket_timeout=redis_timeout_s,
+        socket_connect_timeout=redis_timeout_s,
     )
     providers = ProviderRegistry(settings.providers, sessionmaker=sessionmaker)
 

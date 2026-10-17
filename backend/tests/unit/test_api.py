@@ -19,7 +19,6 @@ from opentelemetry.trace import format_trace_id
 from structlog.contextvars import get_contextvars
 from structlog.testing import capture_logs
 
-from interview.api import resources as resources_module
 from interview.api.app import create_app
 from interview.api.deps import CurrentUserId, routes_without_user
 from interview.api.errors import NotFoundError
@@ -165,10 +164,11 @@ async def test_readyz_all_ok(client: httpx.AsyncClient) -> None:
     assert response.json() == {"status": "ready", "checks": {"database": "ok", "redis": "ok"}}
 
 
-async def test_readyz_reports_failures_without_details(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(resources_module, "READY_CHECK_TIMEOUT_S", 0.05)
+async def test_readyz_reports_failures_without_details() -> None:
+    settings = make_settings()
+    settings.app.ready_check_timeout_s = 0.05
     factory = fake_resources({"database": slow, "redis": broken})
-    app = create_app(make_settings(), resource_factory=factory, init_observability=False)
+    app = create_app(settings, resource_factory=factory, init_observability=False)
     async with open_client(app) as c:
         response = await c.get("/readyz")
     assert response.status_code == 503
