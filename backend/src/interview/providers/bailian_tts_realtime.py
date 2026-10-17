@@ -13,8 +13,10 @@ response.audio.delta（base64 音频）… response.done（usage.characters）�
 - 取消（打断）：协议没有取消当前合成的事件，直接关闭连接（不复用）；
   打断后可调用 warmup() 预建新连接。
 - 首包耗时：发出第一段文本到收到第一块音频。
-- 计费字符：各 response.done 的 usage.characters 之和；没有正常结束时与按已发送文本的估计值
-  （bailian_tts.estimate_characters）取较大值。计数规则待 live 测试确认。
+- 计费字符：2026-10-17 实测，response.done 的 usage.characters 是整个会话（连接）的累计值，
+  计数规则与 CosyVoice 相同（汉字计 2、其他计 1）。所以按连接记住上一次的累计值，
+  本次用量 = 本次各 response 的增量之和（累计值变小视为会话重新计数）。没有正常结束时
+  与按已发送文本的估计值（bailian_tts.estimate_characters）取较大值。
 - 建连、空闲槽、断线与握手错误映射：见 providers/dashscope_ws.py。日志不记录文本。
 """
 
@@ -86,8 +88,8 @@ class _State:
     sent: list[str] = field(default_factory=list[str])
     commits: int = 0
     done: int = 0
-    reported: int = 0
-    responses: list[int] = field(default_factory=list[int])  # 每个 response 的 usage.characters
+    reported: int = 0  # 本次合成的计费字符（累计值的增量之和）
+    responses: list[int] = field(default_factory=list[int])  # 各 response 返回的会话累计值
 
     def characters(self, *, finished: bool) -> int:
         if finished and self.responses:
@@ -114,6 +116,8 @@ class BailianTTSRealtime:
         self._sessions: weakref.WeakKeyDictionary[ClientConnection, dict[str, Any]] = (
             weakref.WeakKeyDictionary()
         )
+        # 每个连接上一次收到的 usage.characters（会话累计值）
+        self._billed: weakref.WeakKeyDictionary[ClientConnection, int] = weakref.WeakKeyDictionary()
         self._ws = DashScopeTaskClient(
             name="tts_realtime",
             provider=provider,
@@ -212,6 +216,7 @@ class BailianTTSRealtime:
         state: _State,
     ) -> AsyncGenerator[bytes]:
         conn = await self._ready(session)
+        previous = self._billed.get(conn, 0)
 
         async def send_text() -> None:
             pending = ""
@@ -243,9 +248,14 @@ class BailianTTSRealtime:
                 elif kind == "response.done":
                     response: dict[str, Any] = event.get("response") or {}
                     usage: dict[str, Any] = response.get("usage") or {}
-                    characters = int(usage.get("characters") or 0)
-                    state.responses.append(characters)
-                    state.reported += characters
+                    cumulative = int(usage.get("characters") or 0)
+                    # 累计值变小说明服务端重新计数，本次增量就是新的累计值
+                    state.reported += (
+                        cumulative - previous if cumulative >= previous else cumulative
+                    )
+                    previous = cumulative
+                    self._billed[conn] = cumulative
+                    state.responses.append(cumulative)
                     state.done += 1
                 elif kind == "error":
                     raise self._failure(event)
@@ -270,6 +280,7 @@ class BailianTTSRealtime:
             else:
                 # 协议没有取消当前合成的事件：关闭连接，不复用
                 self._sessions.pop(conn, None)
+                self._billed.pop(conn, None)
                 await self._ws.discard(conn)
 
     async def _commit(self, conn: ClientConnection, sentence: str, state: _State) -> None:

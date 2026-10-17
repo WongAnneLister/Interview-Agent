@@ -59,6 +59,7 @@ class FakeServer:
         index = self.connections
         b = self.behavior
         buffer = ""
+        total = 0  # 与真实服务一致：usage.characters 是整个会话的累计值
         try:
             await ws.send(json.dumps({"type": "session.created", "session": {"id": "s"}}))
             async for message in ws:
@@ -89,8 +90,9 @@ class FakeServer:
                         delta = "%%%" if b.bad_audio else base64.b64encode(frame).decode()
                         await ws.send(json.dumps({"type": "response.audio.delta", "delta": delta}))
                         await asyncio.sleep(b.frame_delay_s)
+                    total += len(text)
                     if not b.no_done:
-                        response = {"status": "completed", "usage": {"characters": len(text)}}
+                        response = {"status": "completed", "usage": {"characters": total}}
                         await ws.send(json.dumps({"type": "response.done", "response": response}))
         except ConnectionClosed:
             pass
@@ -175,7 +177,7 @@ async def test_session_config_sentence_commits_and_audio(make_server: Any) -> No
     assert len(server.of("input_text_buffer.commit")) == 3
     assert all(e.get("event_id") for e in server.received)
     assert audio == server.sent_audio
-    assert stream.usage.characters == 9 + 8 + 4  # 各 response.done 之和
+    assert stream.usage.characters == 9 + 8 + 4  # 会话累计值 9、17、21 的增量之和
     assert stream.first_latency_ms is not None
 
 
@@ -183,8 +185,10 @@ async def test_connection_and_session_are_reused(make_server: Any) -> None:
     server = await make_server()
     tts = client(server)
     await tts.warmup()  # 默认音色、24 kHz
-    await synth(tts, "第一句。")
-    await synth(tts, "第二句。")
+    _, first = await synth(tts, "第一句。")
+    _, second = await synth(tts, "第二句话。")
+    # 同一会话里累计值继续增长（4 → 9），第二句只计自己的增量
+    assert (first.usage.characters, second.usage.characters) == (4, 5)
     await synth(tts, "换个音色。", voice="Bodega")
     await tts.aclose()
     assert server.connections == 1

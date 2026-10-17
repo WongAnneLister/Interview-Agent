@@ -2,7 +2,7 @@
 
 Ryan、Bodega 各合成一句中文、一句英文，写入 tests/live/out/。
 
-打印首包耗时、每个 response 的计费字符与文本字数（确认计数规则），以及同一会话复用时的首包耗时。
+打印首包耗时、会话累计字符与本次计费字符（对照文本估计值），以及同一会话复用时的首包耗时。
 只需要 BAILIAN_API_KEY（与 .env 里当前选用的 TTS_PROVIDER 无关）；型号和地址取官方文档的值。
 """
 
@@ -48,7 +48,7 @@ async def test_realtime_voices(voice: str, capsys: pytest.CaptureFixture[str]) -
             lines.append(
                 f"  {language} 首包 {stream.first_latency_ms:.0f} ms，"
                 f"音频 {len(pcm) / 2 / SAMPLE_RATE:.1f} 秒，"
-                f"各句计费字符 {end['responses']}（合计 {end['characters']}），"
+                f"会话累计 {end['responses']}，本次计费 {end['characters']}，"
                 f"文本 {len(text)} 字（估计 {estimate_characters(text)}）→ {path.name}"
             )
     finally:
