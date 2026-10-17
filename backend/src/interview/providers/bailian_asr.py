@@ -14,8 +14,10 @@ task-finished 后连接可以复用（下一个任务用新的 task_id）；task
 - 重连：只在 task-started 之前连接断开或建连失败时重连一次（此时还没发音频）；任务中途掉线直接抛出。
 - 超时（timeout_s）：建连握手、等 task-started、每次发送、发出 finish-task 之后等每条消息。
   说话过程中没有识别事件属于正常情况，不设超时，由服务端的无音频超时兜底。
-- 计费时长：服务端在每个最终结果的 usage.duration 返回“当前任务的计费时长（秒）”，取任务内最大值；
-  一个最终结果都没有时按已发送的音频时长估计（偏高，不会让预算保护漏报）。
+- 计费时长：按任务内发送的音频时长计费（含静音，不是有效语音时长，也不是连接时长）。
+  2026-10-17 实测：每个最终结果的 usage.duration 是截至该句结束的累计音频时长（取整到秒），
+  最后一句之后的音频不会再报。所以取 max(最大的 usage.duration, 已发送音频时长)。
+- 文本为空的识别结果（噪声、尾音）不输出，用量照常累计。
 - 日志只记录 task_id、时长、错误码，不记录识别文本。
 """
 
@@ -64,7 +66,7 @@ class _TaskState:
         return self.sent_bytes / 2 / self.sample_rate
 
     def billed_seconds(self) -> float:
-        return max(self.durations) if self.durations else self.sent_seconds
+        return max([*self.durations, self.sent_seconds])
 
 
 class BailianASR:
@@ -308,6 +310,9 @@ class BailianASR:
             duration = usage.get("duration")
             if duration is not None:
                 state.durations.append(float(duration))
+            text = str(sentence.get("text") or "")
+            if not text.strip():
+                return None
             begin = int(sentence.get("begin_time") or 0)
             end = sentence.get("end_time")
             if end is None:  # 中间结果的 end_time 可能为空，取最后一个字的结束时间
@@ -315,7 +320,7 @@ class BailianASR:
                 end = max((int(w.get("end_time") or begin) for w in words), default=begin)
             return STTEvent(
                 kind="final" if sentence.get("sentence_end") else "partial",
-                text=str(sentence.get("text") or ""),
+                text=text,
                 start_ms=begin,
                 end_ms=int(end),
                 language=sentence.get("language") or None,

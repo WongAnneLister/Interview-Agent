@@ -55,7 +55,7 @@ prices:
 #      cached_tokens: {price_cny: null, per: 1000000}
 #      output_tokens: {price_cny: null, per: 1000000}
   # 百炼实时语音识别：查询于 2026-10-16，华北2（北京），音频时长 0.00033 元/秒（不含新用户免费额度）。
-  # 计费时长取服务端 result-generated 的 usage.duration（任务的计费时长，秒），见 providers/bailian_asr.py。
+  # 按任务内发送的音频时长计费（含静音），2026-10-17 实测确认，取值方式见 providers/bailian_asr.py。
   - provider: bailian
     model: fun-asr-realtime
     effective_from: 2026-10-16

@@ -42,6 +42,7 @@ class Behavior:
     no_start: bool = False
     close_on_audio: bool = False
     no_finish: bool = False
+    empty_final: bool = False  # 结束时多发一个空文本的最终结果（噪声）
     bad_json: bool = False
     duration: float = 1.5
 
@@ -108,6 +109,8 @@ class FakeServer:
                     if b.no_finish:
                         continue
                     await ws.send(heartbeat(task_id))
+                    if b.empty_final:
+                        await ws.send(result(task_id, "  ", end=True, duration=b.duration))
                     await ws.send(result(task_id, "hello 世界", end=True, duration=b.duration))
                     await ws.send(event(task_id, "task-finished"))
         except ConnectionClosed:
@@ -247,16 +250,26 @@ async def test_no_language_hints_by_default(make_server: Any) -> None:
     assert "language_hints" not in run["payload"]["parameters"]
 
 
-async def test_task_end_log_has_numbers_without_text(make_server: Any) -> None:
-    server = await make_server(Behavior(duration=0))
+async def test_billed_covers_audio_after_last_reported_duration(make_server: Any) -> None:
+    # 实测：usage.duration 只报到最后一句结束，之后的音频也计费，所以取两者较大值
+    server = await make_server(Behavior(duration=0.1))
     client = asr(server)
     with capture_logs() as logs:
         _, stream = await collect(client, count=3)
     await client.aclose()
-    assert stream.usage.audio_seconds == 0.0  # 服务端报了 0 就用 0
+    assert stream.usage.audio_seconds == pytest.approx(0.3)
     (end,) = [e for e in logs if e["event"] == "asr_task_end"]
-    assert (end["sent_s"], end["completed"]) == (0.3, True)
+    assert (end["sent_s"], end["completed"], end["durations"]) == (0.3, True, [0.1])
     assert "hello" not in json.dumps(logs, ensure_ascii=False, default=str)
+
+
+async def test_empty_text_results_are_skipped(make_server: Any) -> None:
+    server = await make_server(Behavior(empty_final=True, duration=2.0))
+    client = asr(server)
+    events, stream = await collect(client)
+    await client.aclose()
+    assert [e.text for e in events if e.kind == "final"] == ["hello 世界"]
+    assert stream.usage.audio_seconds == 2.0  # 空结果的用量照常累计
 
 
 # ---- 复用与重连 ----
