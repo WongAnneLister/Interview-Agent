@@ -90,6 +90,7 @@ class _State:
     done: int = 0
     reported: int = 0  # 本次合成的计费字符（累计值的增量之和）
     responses: list[int] = field(default_factory=list[int])  # 各 response 返回的会话累计值
+    events: list[str] = field(default_factory=list[str])  # 收到的事件类型（排查卡住用）
 
     def characters(self, *, finished: bool) -> int:
         if finished and self.responses:
@@ -235,11 +236,22 @@ class BailianTTSRealtime:
         finished = False
         try:
             while not (sender.done() and state.done >= state.commits):
-                raw = await self._next(conn, sender)
+                try:
+                    raw = await self._next(conn, sender)
+                except ProviderTimeout:
+                    log.warning(
+                        "tts_realtime_stalled",
+                        commits=state.commits,
+                        done=state.done,
+                        events=state.events[-8:],
+                    )
+                    raise
                 if raw is None:
                     continue
                 event = self._parse(raw)
                 kind = event.get("type")
+                if kind != "response.audio.delta" or state.events[-1:] != [kind]:
+                    state.events.append(str(kind))
                 if kind == "response.audio.delta":
                     audio = self._decode(event.get("delta"))
                     if audio:
