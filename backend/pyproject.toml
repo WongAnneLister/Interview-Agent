@@ -58,7 +58,8 @@ ignore = [
 "tests/**" = ["S101", "S105", "S106"]  # 测试里允许 assert 和假密钥
 
 [tool.pyright]
-include = ["src", "tests"]
+include = ["src", "tests", "tools"]
+extraPaths = ["tools"]
 pythonVersion = "3.12"
 typeCheckingMode = "standard"
 strict = ["src"]
@@ -67,6 +68,7 @@ venv = ".venv"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["tools"]  # 让测试能导入 tools/benchmark 的计算函数
 asyncio_mode = "auto"
 addopts = "-ra -m 'not live and not db'"
 markers = [
