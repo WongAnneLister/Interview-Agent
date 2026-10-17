@@ -43,6 +43,8 @@ class AppSettings(BaseSettings):
     log_format: Literal["json", "console"] = "json"
     # v0 唯一的本地用户，由 make seed 创建并写入 .env
     default_user_id: UUID | None = None
+    # 允许跨域访问 API 的前端地址（JSON 数组，如 ["http://localhost:3000"]）；为空时不允许任何跨域请求
+    web_origins: list[str] = Field(default_factory=list[str])
 
 
 class DatabaseSettings(BaseSettings):

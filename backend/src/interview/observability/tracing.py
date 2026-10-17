@@ -30,6 +30,7 @@ from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import Span as SdkSpan
 from opentelemetry.sdk.trace import SpanProcessor, TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor, SimpleSpanProcessor, SpanExporter
+from opentelemetry.sdk.trace.id_generator import RandomIdGenerator
 from opentelemetry.sdk.trace.sampling import ALWAYS_OFF, ParentBased, TraceIdRatioBased
 from opentelemetry.trace import Span, Status, StatusCode, Tracer
 from opentelemetry.util.types import AttributeValue
@@ -71,6 +72,27 @@ class LF:
     PROMPT_NAME = "langfuse.observation.prompt.name"
     PROMPT_VERSION = "langfuse.observation.prompt.version"
     METADATA = "langfuse.observation.metadata."  # 后接顶层键名，Langfuse 只能按顶层键过滤
+
+
+# 指定下一个根 span 使用的 trace_id（API 用请求 ID 作为 trace_id，日志、Langfuse、错误响应一致）
+_trace_id_override: ContextVar[int | None] = ContextVar("interview_trace_id_override", default=None)
+
+
+class _IdGenerator(RandomIdGenerator):
+    def generate_trace_id(self) -> int:
+        return _trace_id_override.get() or super().generate_trace_id()
+
+
+@contextmanager
+def use_trace_id(trace_id: int) -> Generator[None]:
+    """块内开始的根 span 使用指定的 trace_id（128 位，非 0）；已有父 span 时不受影响。"""
+    if not 0 < trace_id < 2**128:
+        raise ValueError("trace_id 必须是非 0 的 128 位整数")
+    token = _trace_id_override.set(trace_id)
+    try:
+        yield
+    finally:
+        _trace_id_override.reset(token)
 
 
 # 当前上下文中需要传给所有后续 span 的属性
@@ -122,10 +144,12 @@ def init_tracing(
     shutdown_tracing()
     resource = Resource.create({"service.name": service, "deployment.environment": environment})
     if not observability.enabled:
-        provider = TracerProvider(sampler=ALWAYS_OFF, resource=resource)
+        provider = TracerProvider(
+            sampler=ALWAYS_OFF, resource=resource, id_generator=_IdGenerator()
+        )
     else:
         sampler = ParentBased(TraceIdRatioBased(observability.sample_ratio))
-        provider = TracerProvider(sampler=sampler, resource=resource)
+        provider = TracerProvider(sampler=sampler, resource=resource, id_generator=_IdGenerator())
         provider.add_span_processor(_ContextAttributesProcessor(environment))
         if exporter is not None:
             provider.add_span_processor(SimpleSpanProcessor(exporter))
