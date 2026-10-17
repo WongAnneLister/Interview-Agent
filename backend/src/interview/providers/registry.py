@@ -1,7 +1,7 @@
 """按配置里的角色（llm_front、llm_eval、stt、tts）创建厂商实例。
 
 - 每个角色的 PROVIDER 名字通过工厂表找到实现：fake、bailian、deepseek
-  （识别、合成：fake、bailian；合成另预留 bailian_realtime）。
+  （识别、合成：fake、bailian；合成另有 bailian_realtime，即 Qwen-TTS Realtime）。
 - 底层适配器每个角色只建一次（首次取用时），以便复用连接；每次取实例都用调用方的
   CallContext 新包一层观测包装（很轻），interview_id、turn_id 在这时绑定。
 - LLM 主 + 备：配置了 LLM_FALLBACK_* 时，主实例抛 Timeout / Unavailable / RateLimited 就切到备用，
@@ -29,6 +29,7 @@ from interview.config import (
 from interview.observability.pricing import PriceTable
 from interview.providers.bailian_asr import BailianASR
 from interview.providers.bailian_tts import BailianTTS
+from interview.providers.bailian_tts_realtime import BailianTTSRealtime
 from interview.providers.base import (
     FAILOVER_ERRORS,
     ChatMessage,
@@ -122,14 +123,21 @@ def bailian_asr_factory(vendor: VendorSettings) -> Callable[[ProviderRoleSetting
     return create
 
 
-def bailian_tts_factory(vendor: VendorSettings) -> Callable[[ProviderRoleSettings], TTSProvider]:
-    """百炼流式合成（CosyVoice 任务协议）：需要 BAILIAN_API_KEY、TTS_BASE_URL、TTS_VOICE。"""
+def bailian_tts_factory(
+    vendor: VendorSettings, *, realtime: bool = False
+) -> Callable[[ProviderRoleSettings], TTSProvider]:
+    """百炼流式合成：需要 BAILIAN_API_KEY、TTS_BASE_URL、TTS_VOICE。
+
+    realtime=False：CosyVoice / Qwen-Audio-TTS 任务协议；
+    realtime=True：Qwen-TTS Realtime 协议（Qwen3-TTS 音色，如 Ryan、Bodega）。
+    """
+    cls = BailianTTSRealtime if realtime else BailianTTS
 
     def create(role: ProviderRoleSettings) -> TTSProvider:
         voice = role.voice if isinstance(role, TTSSettings) else ""
         if not vendor.configured or not role.base_url or not voice:
             raise ProviderNotConfigured("BAILIAN_API_KEY / TTS_BASE_URL / TTS_VOICE 未配置")
-        return BailianTTS(
+        return cls(
             model=role.model,
             api_key=vendor.api_key.get_secret_value(),
             url=role.base_url,
@@ -139,11 +147,6 @@ def bailian_tts_factory(vendor: VendorSettings) -> Callable[[ProviderRoleSetting
         )
 
     return create
-
-
-def _qwen_tts_realtime(_role: ProviderRoleSettings) -> TTSProvider:
-    """预留：Qwen-TTS Realtime 协议（session.update / input_text_buffer.*）尚未实现。"""
-    raise ProviderNotConfigured("TTS_PROVIDER=bailian_realtime（Qwen-TTS Realtime）尚未实现")
 
 
 def default_factories(settings: ProvidersSettings) -> ProviderFactories:
@@ -159,7 +162,7 @@ def default_factories(settings: ProvidersSettings) -> ProviderFactories:
         tts={
             **fakes.tts,
             "bailian": bailian_tts_factory(settings.bailian),
-            "bailian_realtime": _qwen_tts_realtime,
+            "bailian_realtime": bailian_tts_factory(settings.bailian, realtime=True),
         },
     )
 

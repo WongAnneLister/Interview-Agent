@@ -310,7 +310,7 @@ async def test_timeout_waiting_for_task_finished(make_server: Any) -> None:
 # ---- 注册表 ----
 
 
-def test_factory_requires_voice_and_realtime_is_reserved() -> None:
+def test_factory_requires_voice() -> None:
     vendor = BailianSettings(api_key=SecretStr("sk"))  # pyright: ignore[reportCallIssue]
 
     def role(provider: str, voice: str) -> Any:
@@ -326,5 +326,3 @@ def test_factory_requires_voice_and_realtime_is_reserved() -> None:
     assert isinstance(factories["bailian"](role("bailian", "longanlang_v3")), BailianTTS)
     with pytest.raises(ProviderNotConfigured, match="TTS_VOICE"):
         factories["bailian"](role("bailian", ""))
-    with pytest.raises(ProviderNotConfigured, match="尚未实现"):
-        factories["bailian_realtime"](role("bailian_realtime", "x"))

@@ -76,3 +76,11 @@ prices:
     source: https://help.aliyun.com/zh/model-studio/cosyvoice-v3-flash
     units:
       characters: {price_cny: 1, per: 10000}
+  # Qwen-TTS Realtime：查询于 2026-10-17，华北2（北京），1 元/万字符（不含免费额度）。
+  # 计费字符取各 response.done 的 usage.characters 之和，计数规则待 live 测试确认。
+  - provider: bailian
+    model: qwen3-tts-flash-realtime
+    effective_from: 2026-10-17
+    source: https://help.aliyun.com/zh/model-studio/qwen3-tts-flash-realtime
+    units:
+      characters: {price_cny: 1, per: 10000}

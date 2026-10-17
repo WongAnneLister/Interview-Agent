@@ -14,7 +14,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
-from collections.abc import AsyncGenerator, Awaitable
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import aclosing, suppress
 from typing import Any, cast
 
@@ -54,6 +54,7 @@ class DashScopeTaskClient:
         api_key: str,
         url: str,
         timeout_s: float,
+        on_connect: Callable[[ClientConnection], Awaitable[None]] | None = None,
     ) -> None:
         self.name = name
         self.provider = provider
@@ -61,13 +62,14 @@ class DashScopeTaskClient:
         self.timeout_s = timeout_s
         self._api_key = api_key
         self._url = url
+        self._on_connect = on_connect  # 新连接建立后先执行（如等待 session.created）
         self._idle: tuple[ClientConnection, float] | None = None
 
     # ---- 连接 ----
 
     async def warmup(self) -> None:
         """空闲槽里没有可用连接时新建一个；已有可用连接则什么都不做。"""
-        conn = await self.guard_call(self._acquire())
+        conn = await self.guard_call(self.acquire())
         await self.release(conn)
 
     async def release(self, conn: ClientConnection) -> None:
@@ -87,19 +89,27 @@ class DashScopeTaskClient:
             self._idle = None
             await self.discard(conn)
 
-    async def _acquire(self) -> ClientConnection:
+    async def acquire(self) -> ClientConnection:
+        """取空闲连接（仍可用时），否则新建。"""
         if self._idle is not None:
             conn, since = self._idle
             self._idle = None
             if conn.state is State.OPEN and time.monotonic() - since < IDLE_MAX_S:
                 return conn
             await self.discard(conn)
-        return await connect(
+        conn = await connect(
             self._url,
             additional_headers={"Authorization": f"Bearer {self._api_key}"},
             open_timeout=self.timeout_s,
             close_timeout=self.timeout_s,
         )
+        if self._on_connect is not None:
+            try:
+                await self._on_connect(conn)
+            except BaseException:
+                await self.discard(conn)
+                raise
+        return conn
 
     # ---- 任务 ----
 
@@ -109,7 +119,7 @@ class DashScopeTaskClient:
         for attempt in (1, 2):
             conn: ClientConnection | None = None
             try:
-                conn = await self._acquire()
+                conn = await self.acquire()
                 async with asyncio.timeout(self.timeout_s):
                     await conn.send(message)
                     while True:
@@ -227,8 +237,12 @@ class DashScopeTaskClient:
 
     def task_error(self, header: dict[str, Any]) -> ProviderError:
         """task-failed 按 error_code / error_message 关键词归类（官方未公开完整错误码表）。"""
-        code = str(header.get("error_code") or "")
-        message = str(header.get("error_message") or "")
+        return self.failure(
+            str(header.get("error_code") or ""), str(header.get("error_message") or "")
+        )
+
+    def failure(self, code: str, message: str) -> ProviderError:
+        """服务端报错（错误码 + 说明）按关键词归类到 ProviderError 层级。"""
         text = f"{code} {message}".lower()
         kind: type[ProviderError] = ProviderError
         if any(k in text for k in ("throttl", "ratequota", "rate limit", "too many")):
