@@ -6,13 +6,17 @@
   流式调用的 span 从第一次取值开始，到迭代结束、aclose()、出错或任务被取消时结束；
   被取消时标记 cancelled=true，不算错误。
 - 结束时把适配器返回的用量换算成计量单位，调用 usage.record_usage()（取消时记录已产生的部分）。
+- 在 marked_retry() 块内发起的调用（如结构化输出校验失败后的重试）用量标记 is_retry，
+  span 也带 is_retry。
 """
 
 from __future__ import annotations
 
 import asyncio
 import uuid
-from collections.abc import AsyncIterable, AsyncIterator, Callable, Mapping, Sequence
+from collections.abc import AsyncIterable, AsyncIterator, Callable, Generator, Mapping, Sequence
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from types import TracebackType
@@ -61,6 +65,19 @@ DEFAULT_USAGE_ROLES: Mapping[Slot, UsageRole] = {
 }
 
 
+_is_retry: ContextVar[bool] = ContextVar("provider_call_is_retry", default=False)
+
+
+@contextmanager
+def marked_retry(enabled: bool = True) -> Generator[None]:
+    """块内发起的厂商调用记为重试（重试也是成本，用量表 is_retry=true）。"""
+    token = _is_retry.set(enabled)
+    try:
+        yield
+    finally:
+        _is_retry.reset(token)
+
+
 @dataclass(frozen=True)
 class CallContext:
     """一组调用共用的上下文，在向注册表取实例时绑定。"""
@@ -99,6 +116,7 @@ class Observer:
         return {
             "provider.slot": self.slot,
             "is_fallback": self.is_fallback,
+            "is_retry": _is_retry.get(),
             LF.METADATA + "slot": self.slot,
             LF.METADATA + "is_fallback": self.is_fallback,
         }
@@ -115,6 +133,7 @@ class Observer:
             interview_id=self.ctx.interview_id,
             turn_id=self.ctx.turn_id,
             is_eval=self.ctx.is_eval,
+            is_retry=_is_retry.get(),
             is_fallback=self.is_fallback,
             span=target,
             sessionmaker=self.sessionmaker,

@@ -54,6 +54,7 @@
 | 2026-10-17 | 评估 qwen3.8-max **默认开思考：首 token P50 5536 ms、P95 10371 ms，打分时 1/5 超时**；关思考后 P50 1128 ms、P95 2228 ms、完整回答（≤80 token）P50 2006 ms，无失败 | 两次实测对比 | PRD 要求实时评估 2.5 秒内返回，开思考几乎必然超时；见 ADR-0002 |
 | 2026-10-17 | 打分稳定性都好（标准差 ≤ 0.55），但**不同型号给分水平不同**：同一段回答 flash 8.6–8.8、DeepSeek 8.0、max 开思考 7.0、关思考 7.8 | 两次实测 | 最终报告评分固定一个型号；切到备用要标明；实时评估的分数不对外展示 |
 | 2026-10-17 | 不同时段、网络下首 token 有约 100 ms 波动；单次测量还出现过 588–2001 ms 的大幅波动 | live 测试与两次实测 | 结论以多次运行为准 |
+| 2026-10-17 | **JSON 模式三家都可用**：`response_format={"type": "json_object"}` 经 extra_body 传入，百炼 flash、开思考的 max、DeepSeek 都一次输出合法 JSON（无重试）；完整结构化输出（约 3 个字段）耗时 flash 2.8 秒、DeepSeek 2.1 秒、max 开思考 14.7 秒 | live 测试 test_structured_live（单次） | 实时评估用 flash 也接近 2.5 秒上限，ADR-0002 需要用真实评估器输出再测；结构化输出一律再经 Pydantic 校验 |
 | 2026-10-17 | DeepSeek 默认开启思考，用 `thinking: {"type": "disabled"}` 关闭；百炼用 `enable_thinking: false` | 官方文档 + 实测用量中 reasoning_tokens 为 0 | 已写入角色默认 EXTRA_BODY |
 
 ## 对照 PRD 延迟预算（候选人说完 → 听到面试官首个字）
