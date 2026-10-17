@@ -23,10 +23,14 @@
 - 进程启动时调用 get_prompt_library()：解析全部文件、校验文件头、编译模板，
   任何一个出错都在启动阶段失败。
 - 改提示词内容时 version 加一，旧版本留在 git 历史里。
+  content_hash 是正文（模板）的 SHA-256 前 16 位，
+  随版本号一起写入 span；versions.lock 登记每个提示词的版本和哈希，改了正文却没加版本号时
+  make check 失败（见 prompts/lock.py，更新锁文件用 make prompts-lock）。
 """
 
 from __future__ import annotations
 
+import hashlib
 import re
 from dataclasses import dataclass
 from functools import lru_cache
@@ -69,6 +73,7 @@ class RenderedPrompt:
     version: int
     role: Literal["front", "eval"]
     messages: list[ChatMessage]
+    content_hash: str = ""
 
 
 @dataclass(frozen=True)
@@ -78,6 +83,7 @@ class PromptTemplate:
     system: Template | None
     user: Template
     uses_data: bool
+    content_hash: str
 
     def render(self, **variables: Any) -> RenderedPrompt:
         try:
@@ -93,7 +99,8 @@ class PromptTemplate:
         if system:
             messages.append({"role": "system", "content": system})
         messages.append({"role": "user", "content": user})
-        return RenderedPrompt(self.meta.id, self.meta.version, self.meta.role, messages)
+        meta = self.meta
+        return RenderedPrompt(meta.id, meta.version, meta.role, messages, self.content_hash)
 
 
 def as_data(value: object, kind: str) -> str:
@@ -151,7 +158,15 @@ def load_template(path: Path, env: Environment | None = None) -> PromptTemplate:
         compiled_user = env.from_string(user)
     except TemplateError as exc:
         raise PromptError(f"{path.name}：模板语法错误：{exc}") from exc
-    return PromptTemplate(meta, path, compiled_system, compiled_user, "as_data" in body)
+    return PromptTemplate(
+        meta, path, compiled_system, compiled_user, "as_data" in body, content_hash(body)
+    )
+
+
+def content_hash(body: str) -> str:
+    """正文（文件头之后的模板）的指纹：统一换行符、去掉首尾空白后取 SHA-256 前 16 位。"""
+    normalized = body.replace("\r\n", "\n").strip()
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:16]
 
 
 class PromptLibrary:

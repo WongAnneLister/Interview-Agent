@@ -5,7 +5,7 @@
 BACKEND := backend
 UV := uv run --directory $(BACKEND)
 
-.PHONY: help install fmt lint typecheck test check test-live hooks obs-smoke migrate migration seed test-db cost hotwords benchmark recordings \
+.PHONY: help install fmt lint typecheck test check test-live hooks obs-smoke migrate migration seed test-db cost hotwords benchmark recordings prompts-lock \
 	vps-deploy vps-env vps-ps vps-logs obs-up obs-down tunnel check-env fetch-livekit livekit
 
 help:
@@ -24,6 +24,7 @@ help:
 	@echo "hotwords   从文本文件创建百炼热词表并打印 id：make hotwords file=words.txt prefix=xxx"
 	@echo "benchmark  厂商实测（识别、合成、大模型），报告写入 docs/benchmarks/（会产生少量费用）"
 	@echo "recordings 把实测原始录音（data/raw/）转成 16 kHz 单声道 wav（data/asr/），已有的跳过"
+	@echo "prompts-lock 改完提示词并把 version 加一后，更新 prompts/versions.lock（与提示词一起提交）"
 	@echo "obs-smoke  发送一条示例链路到 Langfuse 并暴露示例指标（需要隧道和 obs-up）"
 	@echo "vps-deploy 部署 / 更新 VPS 上的开发依赖（可重复执行）"
 	@echo "obs-up     启动可观测性服务（本机 Langfuse + VPS 上的 Prometheus、Grafana）"
@@ -86,6 +87,9 @@ hotwords:
 # args 透传给 run_all.py，如 make benchmark args="--skip-asr --model bailian:qwen3.8-plus"
 benchmark:
 	PYTHONPATH=tools $(UV) python -m benchmark.run_all $(args)
+
+prompts-lock:
+	$(UV) python -m interview.prompts.lock
 
 recordings:
 	bash scripts/convert-recordings.sh

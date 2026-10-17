@@ -71,7 +71,7 @@ Interview-Agent/
 - 对象存储只用标准 S3 API（如 aioboto3），不使用任何存储产品专有的 SDK。
 - 所有配置与密钥走环境变量（`config.py` 统一读取），代码里不写死型号和地址。
 - 每张业务表都有 `user_id`，每个查询都按 `user_id` 过滤（v0 只有一个种子用户）。
-- 提示词放在 `prompts/*.md`，文件头写版本号；以 git 为准，Langfuse 只记录版本号，不用它做提示词主存储。
+- 提示词放在 `prompts/*.md`，文件头写版本号；以 git 为准，Langfuse 只记录版本号，不用它做提示词主存储。改了提示词正文必须把 version 加一并运行 `make prompts-lock` 更新 `prompts/versions.lock`（`make check` 会检查）。
 - 可观测性：每个外部调用（大模型、识别、合成、数据库、对象存储）和关键步骤都用 `observability/tracing.py` 开 span；每次厂商调用都用 `observability/usage.py` 记录用量；span 必须带 interview_id 和角色标签。
 - 日志用 structlog 输出 JSON，带 `trace_id`、`interview_id`；日志里不输出简历正文、转写全文和密钥。（完整的输入输出只进本地自部署的 Langfuse，不进日志。）
 - 模型输出的 JSON 一律用 Pydantic 校验，校验失败最多重试 2 次。

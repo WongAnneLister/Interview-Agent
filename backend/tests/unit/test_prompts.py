@@ -33,8 +33,10 @@ from interview.prompts.loader import (
     PromptError,
     PromptLibrary,
     as_data,
+    content_hash,
     get_prompt_library,
 )
+from interview.prompts.lock import check_lock, read_lock, write_lock
 from interview.prompts.structured import (
     StructuredOutputError,
     extract_json,
@@ -287,9 +289,75 @@ async def test_span_attributes_and_retry_usage(
     attrs = dict(spans["evaluate"].attributes or {})
     assert attrs[LF.PROMPT_NAME] == "rate_answer"
     assert attrs[LF.PROMPT_VERSION] == 3
+    assert attrs["prompt.hash"] == library.get("rate_answer").content_hash
     assert (attrs["structured.retries"], attrs["structured.failed"]) == (1, False)
     calls = [s for s in exporter.get_finished_spans() if s.name == "llm.complete"]
     assert [dict(s.attributes or {})["is_retry"] for s in calls] == [False, True]
     # 每次调用的用量行共用一个时间戳：第一次不是重试，第二次（校验失败后的重试）标记 is_retry
     per_call = {e.created_at: e.is_retry for e in store}
     assert list(per_call.values()) == [False, True]
+
+
+# ---- 版本锁 ----
+
+
+def test_content_hash_tracks_body_only(library: PromptLibrary) -> None:
+    template = library.get("rate_answer")
+    rendered_prompt = library.render("rate_answer", question="Q", answer="A")
+    assert rendered_prompt.content_hash == template.content_hash
+    assert len(template.content_hash) == 16
+    assert content_hash("正文\r\n第二行\n") == content_hash(
+        "正文\n第二行"
+    )  # 换行符、首尾空白不影响
+    assert content_hash("正文") != content_hash("正文改了")
+
+
+def test_repository_lock_is_in_sync() -> None:
+    """改了仓库里的提示词却没加版本号、或没运行 make prompts-lock，这里会失败。"""
+    get_prompt_library.cache_clear()
+    assert check_lock(get_prompt_library()) == []
+
+
+def test_lock_workflow(tmp_path: Path) -> None:
+    prompts = tmp_path / "prompts"
+    prompts.mkdir()
+    lock = tmp_path / "versions.lock"
+    path = write(
+        prompts,
+        "greet.md",
+        "---\nid: greet\nversion: 1\ndescription: 问候\nrole: front\n---\n你好\n",
+    )
+
+    assert check_lock(PromptLibrary(prompts), lock) == [
+        "greet：新提示词未登记，运行 make prompts-lock"
+    ]
+    write_lock(PromptLibrary(prompts), lock)
+    assert check_lock(PromptLibrary(prompts), lock) == []
+    assert read_lock(lock)["greet"].version == 1
+
+    # 改了正文没加版本号：检查失败，也拒绝更新锁文件
+    path.write_text(path.read_text(encoding="utf-8").replace("你好", "您好"), encoding="utf-8")
+    problems = check_lock(PromptLibrary(prompts), lock)
+    assert problems == ["greet：正文改了但版本号仍是 1，请在文件头把 version 加一"]
+    with pytest.raises(ValueError, match="version 加一"):
+        write_lock(PromptLibrary(prompts), lock)
+
+    # 加了版本号：提示更新锁文件，更新后通过
+    path.write_text(
+        path.read_text(encoding="utf-8").replace("version: 1", "version: 2"), encoding="utf-8"
+    )
+    assert "锁文件未同步（greet）" in check_lock(PromptLibrary(prompts), lock)[0]
+    write_lock(PromptLibrary(prompts), lock)
+    assert check_lock(PromptLibrary(prompts), lock) == []
+
+    # 版本号变小
+    path.write_text(
+        path.read_text(encoding="utf-8").replace("version: 2", "version: 1"), encoding="utf-8"
+    )
+    assert "变小" in check_lock(PromptLibrary(prompts), lock)[0]
+
+    # 删除提示词
+    path.unlink()
+    assert check_lock(PromptLibrary(prompts), lock) == [
+        "greet：提示词已删除但锁文件里还有，运行 make prompts-lock"
+    ]

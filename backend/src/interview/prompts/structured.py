@@ -7,7 +7,8 @@
   但都只保证“是 JSON”，不保证字段，所以一律再校验。
 - 校验失败：把模型上次的输出和错误摘要（只含字段位置和错误类型，不含输入内容）追加到对话里重试，
   最多 max_retries 次；重试调用的用量标记 is_retry（重试也是成本）。用尽后抛 StructuredOutputError。
-- prompt id / 版本 / 重试次数写入当前 span（Langfuse 的提示词字段同时写入）。日志不记录模型输出。
+- prompt id / 版本 / 内容哈希 / 重试次数写入当前 span（Langfuse 的提示词字段同时写入）。
+  日志不记录模型输出。
 - 厂商错误（超时、限流等）不在这里重试，直接抛出，由注册表的主备切换处理。
 """
 
@@ -134,6 +135,8 @@ async def generate_structured[T: BaseModel](
             LF.PROMPT_VERSION: prompt.version,
             "prompt.id": prompt.id,
             "prompt.version": prompt.version,
+            "prompt.hash": prompt.content_hash,
+            LF.METADATA + "prompt_hash": prompt.content_hash,
             "structured.schema": schema.__name__,
         }
     )
