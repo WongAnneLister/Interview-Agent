@@ -409,3 +409,14 @@ def _no_stt_env(monkeypatch: pytest.MonkeyPatch) -> Generator[None]:
     for name in ("STT_EXTRA_BODY", "STT_BASE_URL"):
         monkeypatch.delenv(name, raising=False)
     yield
+
+
+async def test_warmup_preconnects_and_is_idempotent(make_server: Any) -> None:
+    server = await make_server()
+    client = asr(server)
+    await client.warmup()
+    await client.warmup()  # 已有可用连接时不再新建
+    assert server.connections == 1
+    await collect(client)
+    await client.aclose()
+    assert server.connections == 1  # 任务直接用预热好的连接

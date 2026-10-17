@@ -246,6 +246,10 @@ class STTProvider(Protocol):
         """边送音频边出识别事件；audio 结束即表示说话结束，剩余 final 事件随后输出。"""
         ...
 
+    async def warmup(self) -> None:
+        """提前建好连接（如面试开始时、候选人开口前），避免把建连时间算进首包延迟。"""
+        ...
+
     async def aclose(self) -> None: ...
 
 
@@ -265,6 +269,10 @@ class TTSProvider(Protocol):
         sample_rate: int = 24000,
     ) -> TTSStream:
         """边送文本边出音频帧；打断时调用返回流的 aclose()。voice 为空时用适配器默认音色。"""
+        ...
+
+    async def warmup(self) -> None:
+        """提前建好连接（如面试开始时、等大模型回答时），避免把建连时间算进首包延迟。"""
         ...
 
     async def aclose(self) -> None: ...

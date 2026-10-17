@@ -373,3 +373,15 @@ async def test_closing_unstarted_stream_records_nothing(
     await stream.aclose()
     assert exporter.get_finished_spans() == ()
     assert store == []
+
+
+async def test_warmup_is_forwarded_with_span(
+    store: list[UsageEvent], exporter: InMemorySpanExporter
+) -> None:
+    fake_tts = FakeTTS()
+    registry = make_registry(store, fake_tts=fake_tts)
+    await registry.tts(ctx()).warmup()
+    assert fake_tts.warmups == 1
+    (s,) = exporter.get_finished_spans()
+    assert (s.name, attrs_of(s)[Attr.AGENT_ROLE]) == ("tts.warmup", "tts")
+    assert store == []

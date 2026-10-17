@@ -32,6 +32,7 @@ from interview.observability.tracing import (
     llm_span,
     open_span,
     set_llm_output,
+    span,
 )
 from interview.providers.base import (
     ChatMessage,
@@ -381,6 +382,14 @@ class ObservedSTT:
             annotate=annotate,
         )
 
+    async def warmup(self) -> None:
+        kwargs: dict[str, Any] = {
+            **self._observer.named(self.provider, self.model),
+            **self._observer.attrs(),
+        }
+        with span(f"{self._observer.slot}.warmup", **kwargs):
+            await self._inner.warmup()
+
     async def aclose(self) -> None:
         """底层适配器由注册表共享并统一关闭，这里不关闭。"""
 
@@ -434,6 +443,14 @@ class ObservedTTS:
             model=self.model,
             annotate=annotate,
         )
+
+    async def warmup(self) -> None:
+        kwargs: dict[str, Any] = {
+            **self._observer.named(self.provider, self.model),
+            **self._observer.attrs(),
+        }
+        with span(f"{self._observer.slot}.warmup", **kwargs):
+            await self._inner.warmup()
 
     async def aclose(self) -> None:
         """底层适配器由注册表共享并统一关闭，这里不关闭。"""

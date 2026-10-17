@@ -40,12 +40,16 @@ class _FakeBase:
         self.model = model
         self.calls: list[dict[str, Any]] = []  # 每次调用的参数，供测试断言
         self.closed = False
+        self.warmups = 0
         self._errors: deque[ProviderError | None] = deque(errors)
 
     def _raise_scripted(self) -> None:
         error = self._errors.popleft() if self._errors else None
         if error is not None:
             raise error
+
+    async def warmup(self) -> None:
+        self.warmups += 1
 
     async def aclose(self) -> None:
         self.closed = True
