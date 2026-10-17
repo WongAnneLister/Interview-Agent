@@ -30,6 +30,8 @@ backend/tools/benchmark/out/
 
 # 仅供个人学习的调研资料，不进仓库
 docs/research/
+# 博客草稿，只留在本地
+docs/blog/
 
 # 编辑器与系统
 .idea/
