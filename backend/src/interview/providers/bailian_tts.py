@@ -15,7 +15,7 @@ run-task → 等 task-started → 多次 continue-task（文本片段）→ fini
   丢弃剩余音频等到 task-finished（最多 CANCEL_DRAIN_MAX_S），连接放回空闲槽复用；等不到则关闭连接。
 - 首包耗时：发出第一个 continue-task 到收到第一块音频。
 - 计费字符：服务端 usage.characters 是累计值（sentence-end 与 task-finished 返回），取最大值；
-  任务没有正常结束时与按已发送文本的估计值（非 ASCII 按 2 个字符，偏高）取较大值。
+  任务没有正常结束时与按已发送文本的估计值取较大值（汉字计 2 个字符、其他计 1 个，已实测）。
 - 连接复用、预热、task-started 之前重连一次、错误映射：见 providers/dashscope_ws.py。
 - 日志只记录 task_id、字符数，不记录文本。
 """
@@ -39,9 +39,22 @@ CANCEL_DRAIN_MAX_S = 2.0
 log = structlog.get_logger(__name__)
 
 
+# 汉字（CJK 统一表意文字及扩展区）的码位范围
+_HAN_RANGES = ((0x3400, 0x4DBF), (0x4E00, 0x9FFF), (0xF900, 0xFAFF), (0x20000, 0x323AF))
+
+
+def _is_han(char: str) -> bool:
+    code = ord(char)
+    return any(low <= code <= high for low, high in _HAN_RANGES)
+
+
 def estimate_characters(text: str) -> int:
-    """按已发送文本估计计费字符数：非 ASCII（汉字、全角标点）按 2 个算，宁可偏高。"""
-    return sum(1 if char.isascii() else 2 for char in text)
+    """按已发送文本估计计费字符数：汉字按 2 个，其他（英文、数字、中英文标点）按 1 个。
+
+    2026-10-17 实测 cosyvoice-v3-flash：41 字的中文句子（37 个汉字 + 4 个全角标点）计 78，
+    83 个字符的英文句子计 83。
+    """
+    return sum(2 if _is_han(char) else 1 for char in text)
 
 
 @dataclass
@@ -179,6 +192,8 @@ class BailianTTS:
                 characters=stream.usage.characters,
                 reported=state.reported,
                 estimated=estimate_characters("".join(state.sent)),
+                sent_chunks=len(state.sent),
+                first_latency_ms=stream.first_latency_ms,
             )
             if reusable:
                 await self._ws.release(conn)

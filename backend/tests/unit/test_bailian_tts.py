@@ -207,8 +207,11 @@ async def test_voice_override_and_missing_voice(make_server: Any) -> None:
         bare.synthesize(texts("hi"))
 
 
-def test_estimate_characters_counts_non_ascii_twice() -> None:
-    assert estimate_characters("Hi，你好") == 2 + 2 * 3
+def test_estimate_characters_counts_han_twice() -> None:
+    assert estimate_characters("Hi，你好。") == 2 + 1 + 2 * 2 + 1
+    # live 实测的句子：37 个汉字 + 4 个全角标点 = 78
+    zh = "你好，我是今天的面试官。先请你用两分钟介绍一下最近做的项目，重点说说你负责的部分。"
+    assert estimate_characters(zh) == 78
 
 
 # ---- 复用、预热、取消 ----
@@ -235,7 +238,7 @@ async def test_cancel_sends_directive_and_keeps_connection(make_server: Any) -> 
     assert first.startswith("一段很长的回答#0".encode())
     assert server.actions()[-1] == "finish-task"
     assert server.received[-1]["payload"]["input"] == {"directive": "cancel"}
-    # 没有正常结束：服务端报 7，估计值 14，取较大值
+    # 没有正常结束：服务端报 7，估计值 14（7 个汉字），取较大值
     assert stream.usage is not None
     assert stream.usage.characters == 14
     (end,) = [e for e in logs if e["event"] == "tts_task_end"]

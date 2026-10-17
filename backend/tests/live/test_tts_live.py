@@ -111,6 +111,8 @@ async def test_cancel_then_reuse(capsys: pytest.CaptureFixture[str]) -> None:
     assert "tts_reconnect" not in events
     with capsys.disabled():
         print(
-            f"\n[tts] 取消：服务端字符 {cancelled['reported']}，计费按 {cancelled['characters']}；"
+            f"\n[tts] 取消：首块音频 {cancelled['first_latency_ms']:.0f} ms 时取消，"
+            f"此前已发送 {cancelled['sent_chunks']} 段文本；"
+            f"服务端字符 {cancelled['reported']}，计费按 {cancelled['characters']}；"
             f"取消后下一句首包 {after.first_latency_ms:.0f} ms（复用同一连接）"
         )
