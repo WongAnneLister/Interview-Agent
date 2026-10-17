@@ -36,7 +36,8 @@ def environment() -> str:
     ):
         vendor = settings.deepseek if role.provider == "deepseek" else settings.bailian
         url = role.base_url or vendor.base_url
-        rows.append([label, role.provider or "-", role.model or "-", region(url)])
+        params = ", ".join(f"{k}={v}" for k, v in role.extra_body.items()) or "-"
+        rows.append([label, role.provider or "-", role.model or "-", region(url), params])
     started = now()
     return "\n\n".join(
         [
@@ -44,7 +45,7 @@ def environment() -> str:
             f"运行时间 {started:%Y-%m-%d %H:%M}（北京时间），代码版本 `{git_commit()}`，"
             f"机器 {machine()}。单次结果受网络与本机负载影响，"
             "对比时以同一天、同一网络下的结果为准。",
-            table(["角色", "厂商", "型号", "地域"], rows),
+            table(["角色", "厂商", "型号", "地域", "参数（EXTRA_BODY）"], rows),
         ]
     )
 
