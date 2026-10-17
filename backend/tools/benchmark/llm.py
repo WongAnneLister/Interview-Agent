@@ -133,7 +133,9 @@ async def run(extra_models: list[str] | None = None) -> list[ModelResult]:
     for candidate in candidates(extra_models or []):
         role = candidate.role
         llm = factories[role.provider](role)
-        result = ModelResult(candidate.label, role.provider, role.model, role.base_url)
+        vendor = settings.deepseek if role.provider == "deepseek" else settings.bailian
+        url = role.base_url or vendor.base_url  # 角色没配地址时用厂商级地址
+        result = ModelResult(candidate.label, role.provider, role.model, url)
         try:
             for index in range(CHAT_RUNS):
                 await _chat(llm, result, index)
@@ -154,7 +156,8 @@ def render(results: list[ModelResult]) -> str:
                 r.label,
                 f"{r.provider}/{r.model}",
                 region(r.url),
-                f"{len(r.first_ms)}/{CHAT_RUNS}",
+                f"{len(r.first_ms)}/{CHAT_RUNS}"
+                + (f"（失败：{'、'.join(r.chat_errors)}）" if r.chat_errors else ""),
                 ms(percentile(r.first_ms, 50)),
                 ms(percentile(r.first_ms, 95)),
                 ms(percentile(r.total_ms, 50)),
