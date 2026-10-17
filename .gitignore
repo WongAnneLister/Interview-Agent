@@ -26,6 +26,7 @@ out/
 backend/tests/live/fixtures/
 backend/tests/live/out/
 backend/tools/benchmark/data/
+backend/tools/benchmark/out/
 
 # 仅供个人学习的调研资料，不进仓库
 docs/research/

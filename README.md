@@ -91,6 +91,30 @@ make livekit         # 启动（前台运行）；首次会生成 LIVEKIT_API_KE
 
 信令地址 `ws://127.0.0.1:7880`。媒体 UDP 端口 7882 绑定在局域网 IP 上（WebRTC 不使用回环地址做 ICE 候选），系统防火墙首次可能弹窗询问是否允许传入连接（Windows 选“专用网络”，macOS 选“允许”）；没有 token 无法加入房间。
 
+## 厂商实测
+
+`make benchmark` 依次测语音识别、语音合成和大模型，报告写入 `docs/benchmarks/<日期>.md`（提交到仓库，便于对比）。
+只需要 `.env` 里的厂商配置，不需要隧道；会真实调用厂商，产生少量费用（一次约几毛钱，主要是识别时长）。
+只测某几项：`make benchmark args="--skip-asr"`；追加大模型候选：`args="--model bailian:qwen3.8-plus"`。
+
+**准备识别数据**（录音和参考文本含个人声音，不提交，目录已在 .gitignore 中）：
+
+```text
+backend/tools/benchmark/data/
+  asr/
+    001.wav   16 kHz、单声道、16 bit 的录音
+    001.txt   这段录音的参考文本（逐字写下实际说的话，中英混说照原样写）
+    002.wav
+    002.txt
+  terms.txt   术语表：每行一个词，可写成“词<TAB>权重”（权重 1–5，默认 4）
+```
+
+- 建议 10–20 条、每条 10–60 秒，内容贴近面试回答，混入简历和 JD 里的技术术语。
+- macOS 可以用语音备忘录或 QuickTime 录音，再转换格式：
+  `afconvert -f WAVE -d LEI16@16000 -c 1 录音.m4a backend/tools/benchmark/data/asr/001.wav`
+- 有术语表时会临时创建热词表、对比“无热词 / 有热词”，跑完自动删除（每个账号最多 10 个热词表）。
+- 合成的 20 句音频保存在 `backend/tools/benchmark/out/`（不提交），可以人工试听。
+
 ## 配置
 
 复制 `.env.example` 为 `.env` 后按注释填写。`.env` 包含密钥，不能提交（pre-commit 会拦截）。
