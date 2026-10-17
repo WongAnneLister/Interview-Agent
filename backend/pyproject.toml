@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "语音模拟面试 agent：后端、语音 worker 与评测工具"
 requires-python = ">=3.12,<3.13"
 dependencies = [
+    "aioboto3>=15.5.0",
     "alembic>=1.20.0",
     "asyncpg>=0.32.0",
     "fastapi>=0.143.0",
@@ -18,6 +19,8 @@ dependencies = [
     "opentelemetry-sdk>=1.45.1",
     "prometheus-client>=0.26.0",
     "pydantic-settings>=2.15.0",
+    "pypdf>=6.21.1",
+    "python-multipart>=0.0.32",
     "pyyaml>=6.0.3",
     "redis>=8.1.0",
     "sqlalchemy[asyncio]>=2.0,<2.1",
@@ -81,6 +84,7 @@ markers = [
 
 [dependency-groups]
 dev = [
+    "aiosqlite>=0.22.1",
     "pre-commit>=4.7.0",
     "pyright>=1.1.414",
     "pytest>=9.1.1",

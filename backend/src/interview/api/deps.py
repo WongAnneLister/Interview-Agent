@@ -20,7 +20,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from interview.api.errors import ServiceUnavailableError
 from interview.api.resources import Resources
 from interview.config import Settings
-from interview.providers.registry import ProviderRegistry
+from interview.db.models import UsageRole
+from interview.providers.base import LLMProvider
+from interview.providers.observed import CallContext
+from interview.providers.registry import ProviderNotConfigured, ProviderRegistry
+from interview.storage.base import ObjectStore
 
 # 不需要用户的路由（健康检查、指标）
 PUBLIC_PATHS = frozenset({"/healthz", "/readyz", "/metrics"})
@@ -60,6 +64,22 @@ def get_providers(resources: Annotated[Resources, Depends(get_resources)]) -> Pr
 CurrentUserId = Annotated[uuid.UUID, Depends(get_current_user_id)]
 DbSession = Annotated[AsyncSession, Depends(get_session)]
 Providers = Annotated[ProviderRegistry, Depends(get_providers)]
+
+
+def get_storage(resources: Annotated[Resources, Depends(get_resources)]) -> ObjectStore:
+    if resources.storage is None:
+        raise ServiceUnavailableError("对象存储未配置")
+    return resources.storage
+
+
+def get_resume_llm(user_id: CurrentUserId, providers: Providers) -> LLMProvider:
+    """简历解析走评估模型，用量记在 resume_parse。"""
+    try:
+        return providers.llm(
+            "llm_eval", CallContext(user_id=user_id, usage_role=UsageRole.RESUME_PARSE)
+        )
+    except ProviderNotConfigured as exc:
+        raise ServiceUnavailableError("评估模型未配置，无法解析简历") from exc
 
 
 def _uses(dependant: Dependant, target: object) -> bool:

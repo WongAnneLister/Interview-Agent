@@ -18,6 +18,8 @@ from interview.config import Settings
 from interview.db.session import create_engine, make_sessionmaker
 from interview.observability.instrument import instrument_sqlalchemy
 from interview.providers.registry import ProviderRegistry
+from interview.storage.base import ObjectStore
+from interview.storage.s3 import S3ObjectStore
 
 REDIS_TIMEOUT_S = 5
 
@@ -32,6 +34,7 @@ class Resources:
     ready_checks: Mapping[str, ReadyCheck] = field(default_factory=dict[str, ReadyCheck])
     engine: AsyncEngine | None = None
     redis: Redis | None = None
+    storage: ObjectStore | None = None
 
     async def close(self) -> None:
         await self.providers.aclose()
@@ -87,4 +90,5 @@ def create_resources(settings: Settings) -> Resources:
         ready_checks={"database": lambda: _ping_database(engine), "redis": ping_redis},
         engine=engine,
         redis=redis,
+        storage=S3ObjectStore(settings.s3),
     )

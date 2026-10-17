@@ -6,7 +6,7 @@
   lifespan 启动时创建数据库、Redis、厂商注册表并校验全部提示词模板，关闭时释放。
 - /healthz：进程存活；/readyz：检查数据库与 Redis，任一失败返回 503。两者都不需要用户。
 - CORS 只允许配置 WEB_ORIGINS 里的前端地址；为空时不允许任何跨域请求。
-- 业务路由（以后的 PR）都通过 deps.get_current_user_id 拿用户。
+- 业务路由都通过 deps.get_current_user_id 拿用户。
 """
 
 from __future__ import annotations
@@ -24,6 +24,7 @@ from interview.api.deps import get_resources
 from interview.api.errors import install_error_handlers
 from interview.api.middleware import REQUEST_ID_HEADER, InterviewAPI
 from interview.api.resources import Resources, create_resources
+from interview.api.routes.resumes import router as resumes_router
 from interview.config import Settings, get_settings
 from interview.logging import configure_logging
 from interview.observability.instrument import instrument_fastapi, instrument_httpx
@@ -80,6 +81,7 @@ def create_app(
     )
     app.add_api_route("/healthz", healthz, methods=["GET"], include_in_schema=False)
     app.add_api_route("/readyz", readyz, methods=["GET"], include_in_schema=False)
+    app.include_router(resumes_router)
     mount_metrics(app, enabled=observability)
     instrument_fastapi(app, enabled=observability)
     return app
