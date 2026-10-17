@@ -68,3 +68,11 @@ prices:
     source: https://help.aliyun.com/zh/model-studio/fun-asr-realtime
     units:
       audio_seconds: {price_cny: 0.00033, per: 1}
+  # 百炼语音合成：查询于 2026-10-17，华北2（北京），1 元/万字符（不含免费额度）。
+  # 计费字符取服务端 usage.characters，汉字计几个字符待 live 测试确认，见 providers/bailian_tts.py。
+  - provider: bailian
+    model: cosyvoice-v3-flash
+    effective_from: 2026-10-17
+    source: https://help.aliyun.com/zh/model-studio/cosyvoice-v3-flash
+    units:
+      characters: {price_cny: 1, per: 10000}

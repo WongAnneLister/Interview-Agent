@@ -140,6 +140,8 @@ class STTSettings(ProviderRoleSettings):
 class TTSSettings(ProviderRoleSettings):
     model_config = _config("TTS_")
 
+    voice: str = ""  # 默认音色，调用时传入的 voice 优先
+
 
 class ObservabilitySettings(BaseSettings):
     """链路追踪与指标的总开关。关闭时所有埋点工具都是空操作，不影响业务。"""
