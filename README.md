@@ -101,17 +101,17 @@ make livekit         # 启动（前台运行）；首次会生成 LIVEKIT_API_KE
 
 ```text
 backend/tools/benchmark/data/
+  raw/
+    001.m4a   原始录音（语音备忘录、QuickTime 等录的 m4a / mp3 / wav 都可以）
   asr/
-    001.wav   16 kHz、单声道、16 bit 的录音
-    001.txt   这段录音的参考文本（逐字写下实际说的话，中英混说照原样写）
-    002.wav
-    002.txt
+    001.wav   由 make recordings 从 raw/ 转换出来的 16 kHz、单声道、16 bit 录音
+    001.txt   这段录音的参考文本（逐字写下实际说的话，中英混说照原样写），手动编写
   terms.txt   术语表：每行一个词，可写成“词<TAB>权重”（权重 1–5，默认 4）
 ```
 
 - 建议 10–20 条、每条 10–60 秒，内容贴近面试回答，混入简历和 JD 里的技术术语。
-- macOS 可以用语音备忘录或 QuickTime 录音，再转换格式：
-  `afconvert -f WAVE -d LEI16@16000 -c 1 录音.m4a backend/tools/benchmark/data/asr/001.wav`
+- 新录音放进 `raw/`，按 001、002… 编号命名，然后运行 `make recordings`：批量转换成 `asr/` 下的同名 wav
+  （已转换的跳过，`FORCE=1` 全部重转；macOS 用自带的 afconvert，其他系统用 ffmpeg），并列出还缺参考文本的录音。
 - 有术语表时会临时创建热词表、对比“无热词 / 有热词”，跑完自动删除（每个账号最多 10 个热词表）。
 - 合成的 20 句音频保存在 `backend/tools/benchmark/out/`（不提交），可以人工试听。
 
