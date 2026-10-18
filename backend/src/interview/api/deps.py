@@ -82,6 +82,16 @@ def get_resume_llm(user_id: CurrentUserId, providers: Providers) -> LLMProvider:
         raise ServiceUnavailableError("评估模型未配置，无法解析简历") from exc
 
 
+def get_jd_llm(user_id: CurrentUserId, providers: Providers) -> LLMProvider:
+    """JD 解析走评估模型，按当前用户记录 jd_parse 用量。"""
+    try:
+        return providers.llm(
+            "llm_eval", CallContext(user_id=user_id, usage_role=UsageRole.JD_PARSE)
+        )
+    except ProviderNotConfigured as exc:
+        raise ServiceUnavailableError("评估模型未配置，无法解析职位描述") from exc
+
+
 def _uses(dependant: Dependant, target: object) -> bool:
     return dependant.call is target or any(_uses(d, target) for d in dependant.dependencies)
 

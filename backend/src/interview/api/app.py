@@ -23,6 +23,7 @@ from interview.api.deps import get_resources
 from interview.api.errors import install_error_handlers
 from interview.api.middleware import InterviewAPI
 from interview.api.resources import Resources, create_resources
+from interview.api.routes.jd import router as jd_router
 from interview.api.routes.resumes import router as resumes_router
 from interview.api.upload_limit import ResumeUploadGuard
 from interview.config import Settings, get_settings
@@ -77,6 +78,7 @@ def create_app(
     app.add_api_route("/healthz", healthz, methods=["GET"], include_in_schema=False)
     app.add_api_route("/readyz", readyz, methods=["GET"], include_in_schema=False)
     app.include_router(resumes_router)
+    app.include_router(jd_router)
     mount_metrics(app, enabled=observability)
     instrument_fastapi(app, enabled=observability)
     return app
