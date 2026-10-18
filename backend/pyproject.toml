@@ -85,6 +85,7 @@ markers = [
 [dependency-groups]
 dev = [
     "aiosqlite>=0.22.1",
+    "hypothesis>=6.170.1",
     "pre-commit>=4.7.0",
     "pyright>=1.1.414",
     "pytest>=9.1.1",
