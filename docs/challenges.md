@@ -22,6 +22,7 @@
 | C9 | Qwen-TTS Realtime 偶发卡住，且不能取消合成 | 卡住时最多 10 秒没声音；打断后要重新建连 | 未解决 | 持续观察卡顿率；PR-27 / PR-31 处理 |
 | C10 | 切到备用模型后，结果里记的仍是主模型 | 评分来自哪个模型记错，报告无法按 PRD 标明 | 已解决 | PR-17 修复 |
 | C11 | 识别结果不带语种 | PR-27 要求插件输出语种供轮次检测 | 未解决 | PR-27 用面试语言设置兜底 |
+| C12 | 单元测试本机能过、CI 不过：偷偷读了 .env | main 上 CI 连续两次失败 | 已解决 | 测试 mock 掉用量记录；提交前模拟无 .env 环境跑一次 |
 
 实测原始数字见 [findings.md](benchmarks/findings.md)，这里只记它们带来的风险和对策。
 
@@ -133,6 +134,21 @@
 - **问题**：执行文档 PR-27 要求识别插件输出语种，供轮次检测使用。但 fun-asr-realtime 不返回语种字段，中英混说时也判断不了。
 - **影响**：PR-27 无法按原计划实现。缺语种时轮次检测的行为未知，可能影响“候选人停顿思考时不抢话”。
 - **计划**：PR-27 先查已安装版本的 LiveKit Agents，确认 MultilingualModel 在缺语种时的行为，再决定用面试的语言设置（zh / en）兜底，还是另做语种判断。
+
+## C12 单元测试本机能过、CI 不过：偷偷读了 .env（已解决）
+
+- **发现**：2026-10-18，`9bc310b`、`7b511e0` 推送后 CI 连续失败。
+- **问题**：
+  - `test_evaluator.py::test_result_records_the_model_that_actually_answered` 经真实的 `ProviderRegistry` 取模型，没有 mock 用量记录。
+  - 调用结束后 `observed.py` 会调 `usage.record_usage`，它再通过 `get_price_table()` 调 `get_settings()` 读取全局配置。
+  - 本机有 `.env`，配置齐全，测试通过；CI 上没有 `.env`，`DATABASE_URL` 等必填项缺失，抛 `ConfigError`。
+- **影响**：main 上 CI 红了两次（PR-17 评估器和之后的文档提交）。本机的 `make check` 发现不了这类问题。
+- **修复**：这条测试照同文件其它注册表测试的写法，用 monkeypatch 替换 `usage.record_usage`。
+- **以后注意**：
+  - 单元测试凡是经过 `ProviderRegistry` / `ObservedLLM` 调用模型，都要 mock 掉 `usage.record_usage`，或者传入假的 sessionmaker。
+  - 提交新的注册表相关测试前，先把 `.env` 临时挪走跑一次单元测试，模拟 CI 环境：
+    `mv .env /tmp/.env.bak && make test; mv /tmp/.env.bak .env`
+  - 推送后看一眼 CI 结果（`gh run list --limit 3`）。
 
 ## C6 隧道每 15 秒刷 connect_to failed（已接受）
 

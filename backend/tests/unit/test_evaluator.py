@@ -474,7 +474,13 @@ async def test_usage_role_and_evidence_retry_flag(
     assert all(item["interview_id"] == INTERVIEW_ID for item in records)
 
 
-async def test_result_records_the_model_that_actually_answered() -> None:
+async def test_result_records_the_model_that_actually_answered(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def record(**_kwargs: Any) -> None:
+        return None
+
+    monkeypatch.setattr(usage, "record_usage", record)
     settings = make_settings().providers
     settings.llm_eval.provider, settings.llm_eval.model = "primary", "eval-max"
     settings.llm_fallback.provider, settings.llm_fallback.model = "backup", "backup-flash"
