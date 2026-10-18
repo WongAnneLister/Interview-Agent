@@ -38,7 +38,7 @@ from interview.domain.resume import (
 )
 from interview.logging import configure_logging
 from interview.prompts.loader import get_prompt_library
-from interview.providers.base import LLMProvider
+from interview.providers.base import LLMProvider, ProviderTimeout
 from interview.providers.fake import FakeLLM
 from interview.providers.registry import ProviderRegistry
 from interview.storage.base import StorageError
@@ -453,6 +453,17 @@ async def test_parse_failure_does_not_keep_the_file(
     response = await client.post("/api/resumes", files=_upload(RESUME_PDF))
     assert response.status_code == 502
     assert error_of(response)["code"] == "parse_failed"
+    assert store.objects == {}
+
+
+async def test_model_unavailable_returns_503_and_drops_the_file(
+    api: tuple[httpx.AsyncClient, MemoryObjectStore, SettingsHolder],
+) -> None:
+    client, store, holder = api
+    holder.llm._errors.append(ProviderTimeout("timeout", provider="fake", model="m"))
+    response = await client.post("/api/resumes", files=_upload(RESUME_PDF))
+    assert response.status_code == 503
+    assert error_of(response)["code"] == "model_unavailable"
     assert store.objects == {}
 
 

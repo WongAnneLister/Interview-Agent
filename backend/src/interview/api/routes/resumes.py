@@ -7,6 +7,7 @@ POST 收 multipart 的 file 字段：校验 PDF 与大小，抽取文字，原�
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from datetime import UTC, datetime
 from typing import Annotated
@@ -118,7 +119,8 @@ async def create_resume(
         finally:
             await file.close()
         check_resume_file(data)
-        text = extract_text(data)
+        # pypdf 是同步 CPU 计算，大文件可能要几秒，放到线程里避免卡住事件循环
+        text = await asyncio.to_thread(extract_text, data)
     except ResumeError as exc:
         raise _http(exc) from exc
 

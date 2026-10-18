@@ -4,6 +4,8 @@
 - AppError 及子类：业务异常，code / message / 状态码由异常给出，message 是可以展示给用户的中文说明。
 - 框架的 HTTPException（如路由不存在 404、方法不允许 405）：code 取状态码对应的短名。
 - 请求参数校验失败：422 validation_error，message 只列出字段位置和错误类型，不回显输入值。
+- 厂商调用失败（ProviderError，主备都失败后才会到这里）：503 model_unavailable，
+  日志只记错误类型、厂商和型号。
 - 未捕获的异常：500 internal_error，只返回固定说明和 trace_id，不泄露异常信息和堆栈；
   请求中间件记录异常类型和栈位置，不记录异常消息中的用户数据。
 trace_id 与日志、Langfuse 里的 trace_id 相同，用户反馈问题时提供它即可定位。
@@ -14,12 +16,16 @@ from __future__ import annotations
 from http import HTTPStatus
 from typing import Any
 
+import structlog
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from interview.api.middleware import current_trace_id
+from interview.providers.base import ProviderError
+
+log = structlog.get_logger(__name__)
 
 
 class AppError(Exception):
@@ -100,6 +106,17 @@ async def _validation_error(_request: Request, exc: Exception) -> JSONResponse:
     return error_response(422, "validation_error", "请求参数不合法：" + "；".join(problems))
 
 
+async def _provider_error(_request: Request, exc: Exception) -> JSONResponse:
+    assert isinstance(exc, ProviderError)  # noqa: S101
+    log.warning(
+        "provider_call_failed",
+        error=type(exc).__name__,
+        provider=exc.provider,
+        model=exc.model,
+    )
+    return error_response(503, "model_unavailable", "模型服务暂时不可用，请稍后重试")
+
+
 async def _unhandled_error(_request: Request, _exc: Exception) -> JSONResponse:
     return error_response(500, "internal_error", "服务器内部错误，请稍后重试")
 
@@ -108,5 +125,6 @@ def install_error_handlers(app: FastAPI) -> None:
     app.add_exception_handler(AppError, _app_error)
     app.add_exception_handler(StarletteHTTPException, _http_error)
     app.add_exception_handler(RequestValidationError, _validation_error)
+    app.add_exception_handler(ProviderError, _provider_error)
     # Exception 的处理器由 Starlette 的 ServerErrorMiddleware 调用（500）
     app.add_exception_handler(Exception, _unhandled_error)
