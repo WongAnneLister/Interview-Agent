@@ -1,12 +1,20 @@
 # Interview Agent
 
 [![CI](https://github.com/WongAnneLister/Interview-Agent/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/WongAnneLister/Interview-Agent/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
+中文 | [English](README.en.md)
 
 语音模拟面试 agent：上传简历和 JD，与 AI 面试官进行一场 15–30 分钟的语音面试，结束后得到一份带原话证据的评估报告。
 
-技术栈：Python（FastAPI、LiveKit Agents）+ Next.js，模型使用阿里云百炼。详见 [PRD](docs/PRD-语音模拟面试Agent.md) 和 [开发计划](docs/Claude-Code开工执行文档.md)。
+- **按岗位出题**：从 JD 提取 3–6 个带权重的能力项，结合简历生成面试计划；阶段时间由代码分配，题目可预览和删改。
+- **双层面试官**：前台面试官负责低延迟对话，后台评估器负责打分和决定追问；后台超时时按计划继续，不卡住对话。
+- **有据可查的报告**：每个结论都附候选人原话，引用经代码校验，防止模型编造。
+- **成本与链路可观测**：每次厂商调用都记录用量和估算成本，链路进自部署的 Langfuse，指标进 Prometheus / Grafana。
 
-> 当前处于 v0（个人版）开发阶段，功能按开发计划中的 PR 顺序逐步加入。
+技术栈：Python（FastAPI、LiveKit Agents）+ Next.js，模型使用阿里云百炼，DeepSeek 作为备用大模型。详见 [PRD](docs/PRD-语音模拟面试Agent.md) 和 [开发计划](docs/Claude-Code开工执行文档.md)。
+
+> 当前处于 v0（个人版）开发阶段，只在本机运行，功能按开发计划中的 PR 顺序逐步加入。
 
 ## 开发环境
 
@@ -45,6 +53,17 @@ make test-db      # 数据库集成测试：建临时库 → 迁移 → 测试 �
 改了 `backend/src/interview/db/models.py` 之后，用 `make migration name=add_xxx` 生成迁移，人工检查后再 `make migrate`。
 
 隧道建立后：Postgres `127.0.0.1:25432`，Redis `:26379`，S3 `http://127.0.0.1:29000`（文件浏览 `http://127.0.0.1:29001`）。
+
+隧道运行时，如果本机的 API、语音 worker、评测进程没启动，终端会每 15 秒打印 `connect_to 127.0.0.1 port 8000 / 9465 / 9466: failed`。这是 VPS 上的 Prometheus 在抓取这些进程的指标，不影响数据库等正向通道。
+
+### 运行 API
+
+```bash
+make api   # http://127.0.0.1:8000，改代码自动重载；接口文档在 /docs
+```
+
+需要隧道已建立、已 `make migrate` 和 `make seed`，并在 `.env` 里配置好评估模型（`LLM_EVAL_*`）。只想联调接口、不调用真实厂商时，可以设 `LLM_EVAL_PROVIDER=fake`。
+API 只监听 127.0.0.1，v0 没有登录，所有请求都视为 `DEFAULT_USER_ID` 这个本地用户，不要直接暴露到公网。
 
 ### 可观测性（Langfuse、Prometheus、Grafana）
 
@@ -124,5 +143,13 @@ backend/tools/benchmark/data/
 ```text
 backend/   Python 后端、语音 worker、评测与实测工具
 web/       Next.js 前端（PR-23 起）
+deploy/    VPS 上的开发依赖（vps/）和本机服务配置（local/）
+scripts/   部署、隧道、环境检查等脚本
 docs/      PRD、开发计划、ADR、实测报告
 ```
+
+## 许可证
+
+本项目以 [MIT 许可证](LICENSE) 开源。
+
+调用阿里云百炼、DeepSeek 等第三方服务时，需要遵守各厂商的服务条款，产生的费用由使用者自行承担。生成的面试报告由 AI 给出，仅供练习参考。
