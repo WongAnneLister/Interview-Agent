@@ -6,6 +6,8 @@
 from __future__ import annotations
 
 import asyncio
+import io
+import json
 import uuid
 from collections.abc import AsyncGenerator, AsyncIterator, Callable, Iterator
 from contextlib import asynccontextmanager
@@ -13,14 +15,14 @@ from typing import Any, cast
 
 import httpx
 import pytest
-from fastapi import FastAPI
+from fastapi import APIRouter, Depends, FastAPI
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from opentelemetry.trace import format_trace_id
 from structlog.contextvars import get_contextvars
 from structlog.testing import capture_logs
 
 from interview.api.app import create_app
-from interview.api.deps import CurrentUserId, routes_without_user
+from interview.api.deps import CurrentUserId, get_current_user_id, routes_without_user
 from interview.api.errors import NotFoundError
 from interview.api.middleware import resolve_request_id
 from interview.api.resources import Resources
@@ -37,6 +39,7 @@ from interview.config import (
     S3Settings,
     Settings,
 )
+from interview.logging import configure_logging
 from interview.observability.tracing import init_tracing, shutdown_tracing
 from interview.providers.registry import ProviderRegistry
 
@@ -315,3 +318,112 @@ async def test_cors_only_allows_configured_origin(client: httpx.AsyncClient) -> 
     assert "access-control-allow-origin" not in denied.headers
     simple = await client.get("/test/me", headers={"Origin": WEB})
     assert "x-request-id" in simple.headers["access-control-expose-headers"].lower()
+
+
+@pytest.mark.parametrize("observability", [False, True])
+async def test_cors_covers_server_errors(
+    exporter: InMemorySpanExporter,
+    observability: bool,
+) -> None:
+    app = create_app(
+        make_settings(observability=observability),
+        resource_factory=fake_resources(),
+        init_observability=False,
+    )
+    add_test_routes(app)
+    async with open_client(app) as client:
+        allowed = await client.get("/test/boom", headers={"Origin": WEB})
+        denied = await client.get("/test/boom", headers={"Origin": "https://evil.example"})
+        preflight = await client.options(
+            "/test/boom", headers={"Origin": WEB, "Access-Control-Request-Method": "GET"}
+        )
+    assert allowed.status_code == denied.status_code == 500
+    assert error_of(allowed)["code"] == "internal_error"
+    assert allowed.headers.get("access-control-allow-origin") == WEB
+    assert "x-request-id" in allowed.headers["access-control-expose-headers"].lower()
+    assert "access-control-allow-origin" not in denied.headers
+    assert len(preflight.headers["x-request-id"]) == 32
+
+
+@pytest.mark.parametrize("request_id", [None, "22" * 16])
+@pytest.mark.parametrize("path", ["/test/missing", "/test/boom"])
+async def test_traceparent_matches_response_logs_and_spans(
+    exporter: InMemorySpanExporter,
+    request_id: str | None,
+    path: str,
+) -> None:
+    app = create_app(
+        make_settings(observability=True),
+        resource_factory=fake_resources(),
+        init_observability=False,
+    )
+    add_test_routes(app)
+    parent = "11" * 16
+    headers = {"traceparent": f"00-{parent}-3333333333333333-01"}
+    if request_id:
+        headers["X-Request-ID"] = request_id
+    output = io.StringIO()
+    configure_logging(stream=output)
+    async with open_client(app) as client:
+        response = await client.get(path, headers=headers)
+    assert error_of(response)["trace_id"] == parent
+    assert {
+        format_trace_id(s.context.trace_id) for s in exporter.get_finished_spans() if s.context
+    } == {parent}
+    records = [json.loads(line) for line in output.getvalue().splitlines()]
+    access = [r for r in records if r["event"] == "http_request"]
+    assert len(access) == 1 and access[0]["trace_id"] == parent
+
+
+async def test_invalid_traceparent_falls_back_to_request_id(
+    exporter: InMemorySpanExporter,
+) -> None:
+    app = create_app(
+        make_settings(observability=True),
+        resource_factory=fake_resources(),
+        init_observability=False,
+    )
+    add_test_routes(app)
+    request_id = "44" * 16
+    async with open_client(app) as client:
+        response = await client.get(
+            "/test/missing",
+            headers={
+                "traceparent": f"00-{'0' * 32}-3333333333333333-01",
+                "X-Request-ID": request_id,
+            },
+        )
+    assert error_of(response)["trace_id"] == request_id
+    assert {
+        format_trace_id(s.context.trace_id) for s in exporter.get_finished_spans() if s.context
+    } == {request_id}
+
+
+def test_user_guard_checks_nested_routes_and_inherited_dependencies() -> None:
+    app = create_app(make_settings(), resource_factory=fake_resources(), init_observability=False)
+    child = APIRouter()
+
+    async def leaky() -> None:
+        return None
+
+    child.add_api_route("/leaky", leaky)
+    parent = APIRouter()
+    parent.include_router(child, prefix="/nested")
+    app.include_router(parent, prefix="/unsafe")
+    app.include_router(parent, prefix="/safe", dependencies=[Depends(get_current_user_id)])
+    assert routes_without_user(app) == ["['GET'] /unsafe/nested/leaky"]
+
+
+async def test_fallback_error_keeps_cors_and_one_request_id() -> None:
+    app = create_app(make_settings(), resource_factory=fake_resources(), init_observability=False)
+
+    async def broken_stack(_scope: Any, _receive: Any, _send: Any) -> None:
+        raise RuntimeError("middleware failure")
+
+    app.middleware_stack = broken_stack
+    async with open_client(app) as client:
+        response = await client.get("/test", headers={"Origin": WEB})
+    assert response.status_code == 500
+    assert error_of(response)["code"] == "internal_error"
+    assert response.headers.get("access-control-allow-origin") == WEB
+    assert len(response.headers.get_list("x-request-id")) == 1

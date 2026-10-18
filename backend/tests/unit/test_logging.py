@@ -145,3 +145,33 @@ def test_level_filtering() -> None:
     structlog.get_logger().info("dropped")
     structlog.get_logger().warning("kept")
     assert [r["event"] for r in lines(stream)] == ["kept"]
+
+
+@pytest.mark.parametrize("fmt", ["json", "console"])
+def test_exception_chain_retains_locations_without_sensitive_values(fmt: Any) -> None:
+    stream = io.StringIO()
+    configure_logging(fmt=fmt, stream=stream)
+    try:
+        try:
+            raise ValueError("PRIVATE_SQL_PARAMETER")
+        except ValueError as exc:
+            raise RuntimeError("PRIVATE_RESUME_CONTENT") from exc
+    except RuntimeError:
+        structlog.get_logger().exception("failed")
+    output = stream.getvalue()
+    assert "PRIVATE_SQL_PARAMETER" not in output
+    assert "PRIVATE_RESUME_CONTENT" not in output
+    assert "ValueError" in output and "RuntimeError" in output
+    assert "test_logging.py" in output
+
+
+def test_exception_group_does_not_expose_messages() -> None:
+    stream = capture()
+    try:
+        raise ExceptionGroup("PRIVATE_GROUP", [ValueError("PRIVATE_CHILD")])
+    except ExceptionGroup:
+        structlog.get_logger().exception("failed_group")
+    record = lines(stream)[0]
+    assert "ExceptionGroup" in record["exception"] and "ValueError" in record["exception"]
+    assert "PRIVATE_GROUP" not in stream.getvalue()
+    assert "PRIVATE_CHILD" not in stream.getvalue()

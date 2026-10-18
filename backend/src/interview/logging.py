@@ -9,15 +9,16 @@ from __future__ import annotations
 
 import logging
 import re
+import traceback
 from collections.abc import Generator, MutableMapping
 from contextlib import contextmanager
-from typing import Any, Literal, TextIO
+from typing import Any, Literal, TextIO, cast
 
 import structlog
 from opentelemetry import trace
 from opentelemetry.trace import format_span_id, format_trace_id
 from structlog.contextvars import bound_contextvars, merge_contextvars
-from structlog.typing import EventDict, Processor, WrappedLogger
+from structlog.typing import EventDict, ExcInfo, Processor, WrappedLogger
 
 REDACTED = "***"
 
@@ -64,6 +65,31 @@ def add_otel_context(_logger: WrappedLogger, _method: str, event_dict: EventDict
     return event_dict
 
 
+def _safe_exception(exc_info: ExcInfo) -> str:
+    """只记录异常类型和栈位置。消息、源码行及局部变量都可能含简历或密钥。"""
+    lines: list[str] = []
+    seen: set[int] = set()
+
+    def append(exc: BaseException) -> None:
+        if id(exc) in seen:
+            return
+        seen.add(id(exc))
+        cause = exc.__cause__ or (None if exc.__suppress_context__ else exc.__context__)
+        if cause is not None:
+            append(cause)
+        lines.append(f"{type(exc).__module__}.{type(exc).__name__}")
+        if exc.__traceback__ is not None:
+            for frame, lineno in traceback.walk_tb(exc.__traceback__):
+                code = frame.f_code
+                lines.append(f"  {code.co_filename}:{lineno} in {code.co_name}")
+        if isinstance(exc, BaseExceptionGroup):
+            for child in cast(BaseExceptionGroup[BaseException], exc).exceptions:
+                append(child)
+
+    append(exc_info[1])
+    return "\n".join(lines)
+
+
 def configure_logging(
     *,
     level: str = "INFO",
@@ -76,6 +102,7 @@ def configure_logging(
         add_otel_context,
         structlog.processors.add_log_level,
         structlog.processors.TimeStamper(fmt="iso", utc=True),
+        structlog.processors.ExceptionRenderer(_safe_exception),
         redact,
         structlog.processors.StackInfoRenderer(),
     ]
@@ -83,7 +110,6 @@ def configure_logging(
         processors.append(structlog.dev.ConsoleRenderer(colors=True))
     else:
         processors += [
-            structlog.processors.format_exc_info,
             structlog.processors.JSONRenderer(ensure_ascii=False),
         ]
     structlog.configure(

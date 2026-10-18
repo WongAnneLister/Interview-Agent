@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 import json
 import uuid
 from collections.abc import AsyncIterator
@@ -10,9 +11,10 @@ from typing import Any, cast
 
 import httpx
 import pytest
-from pypdf import PdfWriter
+from pypdf import PdfReader, PdfWriter
+from sqlalchemy import text
 from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.ext.asyncio import create_async_engine
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.pool import StaticPool
 from sqlalchemy.schema import CreateTable
@@ -25,6 +27,7 @@ from interview.db.models import Resume, User
 from interview.db.session import make_sessionmaker
 from interview.domain.resume import (
     MAX_RESUME_BYTES,
+    ResumeError,
     ResumeHasNoText,
     ResumeNotPdf,
     ResumeParsed,
@@ -33,13 +36,17 @@ from interview.domain.resume import (
     extract_text,
     parse_resume,
 )
+from interview.logging import configure_logging
 from interview.prompts.loader import get_prompt_library
 from interview.providers.base import LLMProvider
 from interview.providers.fake import FakeLLM
 from interview.providers.registry import ProviderRegistry
+from interview.storage.base import StorageError
 from interview.storage.memory import MemoryObjectStore
 
 USER = uuid.UUID("00000000-0000-4000-8000-000000000013")
+TEXT_LIMIT = 50_000
+UPLOAD_BODY_LIMIT = MAX_RESUME_BYTES + 64 * 1024
 
 PARSED = {
     "name": "Alex Chen",
@@ -127,6 +134,15 @@ def text_pdf(lines: list[str]) -> bytes:
     return bytes(out)
 
 
+def encrypted_pdf(user_password: str, owner_password: str) -> bytes:
+    writer = PdfWriter()
+    writer.append(PdfReader(BytesIO(RESUME_PDF)))
+    writer.encrypt(user_password=user_password, owner_password=owner_password)
+    buffer = BytesIO()
+    writer.write(buffer)
+    return buffer.getvalue()
+
+
 def blank_pdf() -> bytes:
     writer = PdfWriter()
     writer.add_blank_page(width=612, height=792)
@@ -176,6 +192,42 @@ async def test_parse_resume_uses_v1_prompt_and_drops_contact_fields() -> None:
     assert (rendered.id, rendered.version) == ("resume_parse", 1)
 
 
+class SessionProbe:
+    """数当前打开的数据库会话。简历解析进行时这个数应该是 0。"""
+
+    def __init__(self, inner: Any) -> None:
+        self._inner = inner
+        self.depth = 0
+
+    def __call__(self) -> Any:
+        probe = self
+        context = self._inner()
+
+        class _Tracked:
+            async def __aenter__(self) -> Any:
+                probe.depth += 1
+                return await context.__aenter__()
+
+            async def __aexit__(self, *args: object) -> Any:
+                try:
+                    return await context.__aexit__(*args)
+                finally:
+                    probe.depth -= 1
+
+        return _Tracked()
+
+
+class TrackingLLM(FakeLLM):
+    def __init__(self, probe: SessionProbe) -> None:
+        super().__init__(reply=json.dumps(PARSED))
+        self.probe = probe
+        self.depth_during_complete: int | None = None
+
+    async def complete(self, messages: Any, **kwargs: Any) -> Any:
+        self.depth_during_complete = self.probe.depth
+        return await super().complete(messages, **kwargs)
+
+
 @pytest.fixture
 async def api() -> AsyncIterator[tuple[httpx.AsyncClient, MemoryObjectStore, SettingsHolder]]:
     engine = create_async_engine("sqlite+aiosqlite://", poolclass=StaticPool)
@@ -189,13 +241,14 @@ async def api() -> AsyncIterator[tuple[httpx.AsyncClient, MemoryObjectStore, Set
 
     settings = make_settings(user=USER)
     store = MemoryObjectStore()
-    llm = FakeLLM(reply=json.dumps(PARSED))
+    probe = SessionProbe(sessionmaker)
+    llm = TrackingLLM(probe)
 
     def factory(current: object) -> Resources:
         assert current is settings
         return Resources(
             settings=settings,
-            sessionmaker=sessionmaker,
+            sessionmaker=cast(async_sessionmaker[AsyncSession], probe),
             providers=ProviderRegistry(settings.providers),
             storage=store,
         )
@@ -205,17 +258,20 @@ async def api() -> AsyncIterator[tuple[httpx.AsyncClient, MemoryObjectStore, Set
 
     app = create_app(settings, resource_factory=factory, init_observability=False)
     app.dependency_overrides[get_resume_llm] = override_llm
-    holder = SettingsHolder(settings, store, llm)
+    holder = SettingsHolder(settings, store, llm, app)
     async with open_client(app) as client:
         yield client, store, holder
     await engine.dispose()
 
 
 class SettingsHolder:
-    def __init__(self, settings: object, store: MemoryObjectStore, llm: FakeLLM) -> None:
+    def __init__(
+        self, settings: object, store: MemoryObjectStore, llm: TrackingLLM, app: Any
+    ) -> None:
         self.settings = settings
         self.store = store
         self.llm = llm
+        self.app = app
 
 
 def _upload(data: bytes, name: str = "resume.pdf") -> dict[str, tuple[str, bytes, str]]:
@@ -310,3 +366,227 @@ async def test_other_user_cannot_read_or_update(
     owned = await client.get(f"/api/resumes/{resume_id}")
     assert owned.status_code == 200
     assert owned.json()["parsed"]["name"] == "Alex Chen"
+
+
+def test_extract_text_reads_owner_locked_pdf_and_rejects_user_password() -> None:
+    assert "Alex Chen" in extract_text(encrypted_pdf("", "owner-secret"))
+    with pytest.raises(ResumeError, match="加密") as caught:
+        extract_text(encrypted_pdf("user-secret", "owner-secret"))
+    assert caught.value.code == "resume_unreadable"
+
+
+def test_extract_text_rejects_resume_longer_than_50k_characters() -> None:
+    huge = text_pdf(["A" * (TEXT_LIMIT + 1)])
+    with pytest.raises(ResumeError, match="太长") as caught:
+        extract_text(huge)
+    assert caught.value.code == "resume_too_long"
+    assert "A" * 20 in extract_text(text_pdf(["A" * TEXT_LIMIT]))
+
+
+async def test_parse_resume_strips_phone_and_email_from_free_text() -> None:
+    payload = json.loads(json.dumps(PARSED))
+    payload["name"] = "Alex Chen alex@northwind.example"
+    payload["work"][0]["highlights"] = ["138-0000-0000", "Built a payment service"]
+    payload["skills"] = ["Go", "alex@northwind.example", "PostgreSQL"]
+    result = await parse_resume(FakeLLM(reply=json.dumps(payload)), "resume")
+    dumped = json.dumps(result.value.model_dump(), ensure_ascii=False)
+    assert "138-0000-0000" not in dumped
+    assert "13800000000" not in dumped
+    assert "alex@northwind.example" not in dumped
+    assert result.value.name == "Alex Chen"
+    assert result.value.work[0].highlights == ["Built a payment service"]
+    assert result.value.skills == ["Go", "PostgreSQL"]
+
+
+async def test_patch_rejects_partial_body_and_keeps_stored_resume(
+    api: tuple[httpx.AsyncClient, MemoryObjectStore, SettingsHolder],
+) -> None:
+    client, _store, _holder = api
+    created = await client.post("/api/resumes", files=_upload(RESUME_PDF))
+    resume_id = created.json()["id"]
+    rejected = await client.patch(f"/api/resumes/{resume_id}", json={"skills": ["Go"]})
+    assert rejected.status_code == 422
+    assert error_of(rejected)["code"] == "validation_error"
+    kept = await client.get(f"/api/resumes/{resume_id}")
+    assert kept.json()["parsed"]["work"][0]["company"] == "Northwind Labs"
+    assert kept.json()["parsed"]["skills"] == ["Go", "PostgreSQL"]
+
+
+async def test_patch_accepts_explicit_empty_sections(
+    api: tuple[httpx.AsyncClient, MemoryObjectStore, SettingsHolder],
+) -> None:
+    client, _store, _holder = api
+    created = await client.post("/api/resumes", files=_upload(RESUME_PDF))
+    resume_id = created.json()["id"]
+    revised = json.loads(json.dumps(PARSED))
+    revised["work"] = []
+    revised["projects"] = []
+    revised["skills"] = []
+    revised["education"] = []
+    patched = await client.patch(f"/api/resumes/{resume_id}", json=revised)
+    assert patched.status_code == 200
+    assert patched.json()["parsed"]["work"] == []
+    assert patched.json()["parsed"]["name"] == "Alex Chen"
+
+
+async def test_storage_failure_does_not_call_the_model(
+    api: tuple[httpx.AsyncClient, MemoryObjectStore, SettingsHolder],
+) -> None:
+    client, store, holder = api
+
+    async def fail_put(*_args: object, **_kwargs: object) -> None:
+        raise StorageError("down")
+
+    store.put = fail_put  # type: ignore[method-assign]
+    response = await client.post("/api/resumes", files=_upload(RESUME_PDF))
+    assert response.status_code == 503
+    assert error_of(response)["code"] == "service_unavailable"
+    assert holder.llm.calls == []
+    assert store.objects == {}
+
+
+async def test_parse_failure_does_not_keep_the_file(
+    api: tuple[httpx.AsyncClient, MemoryObjectStore, SettingsHolder],
+) -> None:
+    client, store, holder = api
+    holder.llm._reply = "not json"
+    response = await client.post("/api/resumes", files=_upload(RESUME_PDF))
+    assert response.status_code == 502
+    assert error_of(response)["code"] == "parse_failed"
+    assert store.objects == {}
+
+
+async def test_model_call_does_not_hold_a_database_session(
+    api: tuple[httpx.AsyncClient, MemoryObjectStore, SettingsHolder],
+) -> None:
+    client, _store, holder = api
+    created = await client.post("/api/resumes", files=_upload(RESUME_PDF))
+    assert created.status_code == 201
+    assert holder.llm.depth_during_complete == 0
+
+
+def _upload_scope(content_length: int | None) -> dict[str, Any]:
+    headers = [(b"content-type", b"multipart/form-data; boundary=bound")]
+    if content_length is not None:
+        headers.append((b"content-length", str(content_length).encode()))
+    return {
+        "type": "http",
+        "asgi": {"version": "3.0"},
+        "http_version": "1.1",
+        "method": "POST",
+        "scheme": "http",
+        "path": "/api/resumes",
+        "raw_path": b"/api/resumes",
+        "query_string": b"",
+        "headers": headers,
+        "client": ("127.0.0.1", 1234),
+        "server": ("test", 80),
+        "root_path": "",
+    }
+
+
+async def test_declared_body_over_the_limit_is_rejected_before_reading(
+    api: tuple[httpx.AsyncClient, MemoryObjectStore, SettingsHolder],
+) -> None:
+    _client, store, holder = api
+    reads = 0
+
+    async def receive() -> dict[str, Any]:
+        nonlocal reads
+        reads += 1
+        return {"type": "http.request", "body": b"should-not-be-read", "more_body": False}
+
+    sent: list[dict[str, Any]] = []
+
+    async def send(message: dict[str, Any]) -> None:
+        sent.append(message)
+
+    await holder.app(_upload_scope(UPLOAD_BODY_LIMIT + 1), receive, send)
+    assert reads == 0
+    assert sent[0]["status"] == 413
+    body = json.loads(sent[1]["body"])
+    assert body["error"]["code"] == "file_too_large"
+    assert store.objects == {}
+    assert holder.llm.calls == []
+
+
+async def test_chunked_body_over_the_limit_stops_early(
+    api: tuple[httpx.AsyncClient, MemoryObjectStore, SettingsHolder],
+) -> None:
+    _client, _store, holder = api
+    chunk = b"a" * (1024 * 1024)
+    total_chunks = UPLOAD_BODY_LIMIT // len(chunk) + 2
+    index = 0
+
+    async def receive() -> dict[str, Any]:
+        nonlocal index
+        if index >= total_chunks:
+            return {"type": "http.request", "body": b"", "more_body": False}
+        index += 1
+        return {"type": "http.request", "body": chunk, "more_body": index < total_chunks}
+
+    sent: list[dict[str, Any]] = []
+
+    async def send(message: dict[str, Any]) -> None:
+        sent.append(message)
+
+    await holder.app(_upload_scope(None), receive, send)
+    assert sent[0]["status"] == 413
+    assert index < total_chunks
+
+
+@pytest.mark.parametrize("role", [None, ""])
+async def test_upload_keeps_projects_without_role(
+    api: tuple[httpx.AsyncClient, MemoryObjectStore, SettingsHolder],
+    role: str | None,
+) -> None:
+    client, _store, holder = api
+    payload = json.loads(json.dumps(PARSED))
+    if role is None:
+        del payload["projects"][0]["role"]
+    else:
+        payload["projects"][0]["role"] = role
+    holder.llm._reply = json.dumps(payload)
+    response = await client.post("/api/resumes", files=_upload(RESUME_PDF))
+    assert response.status_code == 201
+    assert len(holder.llm.calls) == 1
+    project = response.json()["parsed"]["projects"][0]
+    assert project["name"] == "Ledger" and project["role"] == ""
+
+
+async def test_patch_redacts_contacts_before_persisting(
+    api: tuple[httpx.AsyncClient, MemoryObjectStore, SettingsHolder],
+) -> None:
+    client, _store, _holder = api
+    created = await client.post("/api/resumes", files=_upload(RESUME_PDF))
+    path = f"/api/resumes/{created.json()['id']}"
+    payload = json.loads(json.dumps(PARSED))
+    payload["name"] += " alex@northwind.example"
+    payload["skills"] += ["13800000000"]
+    payload["projects"][0]["highlights"] += ["联系 alex@northwind.example"]
+    updated = await client.patch(path, json=payload)
+    fetched = await client.get(path)
+    assert updated.status_code == fetched.status_code == 200
+    assert fetched.json()["parsed"]["skills"] == ["Go", "PostgreSQL"]
+    for response in (updated, fetched):
+        assert "alex@northwind.example" not in response.text
+        assert "13800000000" not in response.text
+
+
+async def test_database_failure_does_not_log_resume_fields(
+    api: tuple[httpx.AsyncClient, MemoryObjectStore, SettingsHolder],
+) -> None:
+    client, store, holder = api
+    engine = holder.llm.probe._inner.kw["bind"]
+    async with engine.begin() as conn:
+        await conn.execute(text("PRAGMA foreign_keys=ON"))
+    holder.settings.app.default_user_id = uuid.uuid4()  # type: ignore[attr-defined]
+    holder.llm._reply = json.dumps({"name": "PRIVATE_NAME", "skills": ["PRIVATE_SKILL"]})
+    output = io.StringIO()
+    configure_logging(stream=output)
+    response = await client.post("/api/resumes", files=_upload(RESUME_PDF))
+    assert response.status_code == 500
+    assert store.objects == {}
+    logged = output.getvalue()
+    assert "http_unhandled_error" in logged and "IntegrityError" in logged
+    assert "PRIVATE_NAME" not in logged and "PRIVATE_SKILL" not in logged

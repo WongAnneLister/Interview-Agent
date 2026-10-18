@@ -28,6 +28,7 @@ def create_engine(url: str, **kwargs: Any) -> AsyncEngine:
     return _create_async_engine(
         url,
         pool_pre_ping=True,
+        hide_parameters=True,
         connect_args={"timeout": CONNECT_TIMEOUT_S, "command_timeout": COMMAND_TIMEOUT_S},
         **kwargs,
     )

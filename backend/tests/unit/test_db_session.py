@@ -34,6 +34,10 @@ def test_engine_uses_asyncpg_with_pre_ping() -> None:
     assert engine.dialect.driver == "asyncpg"
 
 
+def test_engine_hides_sql_parameters() -> None:
+    assert db_session.create_engine(URL).sync_engine.hide_parameters
+
+
 def test_engine_and_sessionmaker_are_process_singletons() -> None:
     assert db_session.get_engine() is db_session.get_engine()
     assert db_session.get_sessionmaker() is db_session.get_sessionmaker()

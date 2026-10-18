@@ -17,14 +17,14 @@ from typing import Annotated
 
 import structlog
 from fastapi import Depends, FastAPI
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from interview.api.deps import get_resources
 from interview.api.errors import install_error_handlers
-from interview.api.middleware import REQUEST_ID_HEADER, InterviewAPI
+from interview.api.middleware import InterviewAPI
 from interview.api.resources import Resources, create_resources
 from interview.api.routes.resumes import router as resumes_router
+from interview.api.upload_limit import ResumeUploadGuard
 from interview.config import Settings, get_settings
 from interview.logging import configure_logging
 from interview.observability.instrument import instrument_fastapi, instrument_httpx
@@ -71,14 +71,9 @@ def create_app(
 
     app = InterviewAPI(title="Interview Agent API", version="0.1.0", lifespan=lifespan)
     install_error_handlers(app)
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=settings.app.web_origins,
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-        expose_headers=[REQUEST_ID_HEADER],
-    )
+    # CORS 包住整个 HTTP 处理（包括 ServerErrorMiddleware 与兜底的 500）。
+    app.configure_cors(settings.app.web_origins)
+    app.add_middleware(ResumeUploadGuard)
     app.add_api_route("/healthz", healthz, methods=["GET"], include_in_schema=False)
     app.add_api_route("/readyz", readyz, methods=["GET"], include_in_schema=False)
     app.include_router(resumes_router)

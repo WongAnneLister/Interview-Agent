@@ -14,7 +14,7 @@ from typing import Annotated
 
 from fastapi import Depends, FastAPI, Request
 from fastapi.dependencies.models import Dependant
-from fastapi.routing import APIRoute
+from fastapi.routing import APIRoute, iter_route_contexts
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from interview.api.errors import ServiceUnavailableError
@@ -89,9 +89,11 @@ def _uses(dependant: Dependant, target: object) -> bool:
 def routes_without_user(app: FastAPI) -> list[str]:
     """没有（直接或间接）依赖 get_current_user_id 的非公开路由。"""
     missing: list[str] = []
-    for route in app.routes:
+    # include_router 的路由在 FastAPI 0.143 中是惰性挂载；使用有效上下文才能
+    # 同时看到完整前缀和 include_router(..., dependencies=...) 继承的依赖。
+    for route in iter_route_contexts(app.routes):
         if (
-            isinstance(route, APIRoute)
+            isinstance(route.original_route, APIRoute)
             and route.path not in PUBLIC_PATHS
             and not _uses(route.dependant, get_current_user_id)
         ):
