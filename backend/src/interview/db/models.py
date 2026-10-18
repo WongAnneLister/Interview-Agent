@@ -230,6 +230,8 @@ class Plan(UserOwned, Base):
     user_id: Mapped[uuid.UUID] = mapped_column()
     competencies_json: Mapped[list[Any]] = mapped_column(JSONB)
     questions_json: Mapped[list[Any]] = mapped_column(JSONB)
+    tech_terms_json: Mapped[list[Any]] = mapped_column(JSONB, server_default="[]")
+    stages_json: Mapped[list[Any]] = mapped_column(JSONB, server_default="[]")
     prompt_version: Mapped[str] = mapped_column(String(32))
     created_at: Mapped[datetime] = _created_at()
     updated_at: Mapped[datetime] = _updated_at()

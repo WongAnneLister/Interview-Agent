@@ -13,11 +13,9 @@ import httpx
 import pytest
 from pypdf import PdfReader, PdfWriter
 from sqlalchemy import text
-from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.pool import StaticPool
-from sqlalchemy.schema import CreateTable
+from sqlite_helpers import create_tables
 from test_api import error_of, make_settings, open_client
 
 from interview.api.app import create_app
@@ -78,28 +76,6 @@ PARSED = {
         }
     ],
 }
-
-
-@compiles(JSONB, "sqlite")
-def _jsonb_as_json(_type: JSONB, _compiler: object, **_kw: object) -> str:
-    return "JSON"
-
-
-@compiles(CreateTable, "sqlite")
-def _strip_pg_uuid_default(element: CreateTable, compiler: Any, **kw: Any) -> str:
-    """SQLite 没有 gen_random_uuid()；建表时暂时拿掉这个服务端默认值。"""
-    saved: list[tuple[object, object]] = []
-    for col in element.element.columns:
-        default = col.server_default
-        if default is not None and "gen_random_uuid" in str(getattr(default, "arg", "")):
-            saved.append((col, default))
-            col.server_default = None
-    try:
-        visit = compiler.visit_create_table
-        return str(visit(element, **kw))
-    finally:
-        for col, default in saved:
-            col.server_default = default  # type: ignore[attr-defined]
 
 
 def text_pdf(lines: list[str]) -> bytes:
@@ -232,8 +208,7 @@ class TrackingLLM(FakeLLM):
 async def api() -> AsyncIterator[tuple[httpx.AsyncClient, MemoryObjectStore, SettingsHolder]]:
     engine = create_async_engine("sqlite+aiosqlite://", poolclass=StaticPool)
     async with engine.begin() as conn:
-        await conn.run_sync(lambda sync: cast(Any, User.__table__).create(sync))
-        await conn.run_sync(lambda sync: cast(Any, Resume.__table__).create(sync))
+        await create_tables(conn, User, Resume)
     sessionmaker = make_sessionmaker(engine)
     async with sessionmaker() as session:
         session.add(User(id=USER, email="local@example.com"))

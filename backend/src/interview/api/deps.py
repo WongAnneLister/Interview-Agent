@@ -72,24 +72,35 @@ def get_storage(resources: Annotated[Resources, Depends(get_resources)]) -> Obje
     return resources.storage
 
 
+def eval_llm(
+    providers: ProviderRegistry,
+    ctx: CallContext,
+    *,
+    message: str = "评估模型未配置",
+) -> LLMProvider:
+    """按调用上下文取评估模型；同一场面试的不同用途用 CallContext.usage_role 区分。"""
+    try:
+        return providers.llm("llm_eval", ctx)
+    except ProviderNotConfigured as exc:
+        raise ServiceUnavailableError(message) from exc
+
+
 def get_resume_llm(user_id: CurrentUserId, providers: Providers) -> LLMProvider:
     """简历解析走评估模型，用量记在 resume_parse。"""
-    try:
-        return providers.llm(
-            "llm_eval", CallContext(user_id=user_id, usage_role=UsageRole.RESUME_PARSE)
-        )
-    except ProviderNotConfigured as exc:
-        raise ServiceUnavailableError("评估模型未配置，无法解析简历") from exc
+    return eval_llm(
+        providers,
+        CallContext(user_id=user_id, usage_role=UsageRole.RESUME_PARSE),
+        message="评估模型未配置，无法解析简历",
+    )
 
 
 def get_jd_llm(user_id: CurrentUserId, providers: Providers) -> LLMProvider:
     """JD 解析走评估模型，按当前用户记录 jd_parse 用量。"""
-    try:
-        return providers.llm(
-            "llm_eval", CallContext(user_id=user_id, usage_role=UsageRole.JD_PARSE)
-        )
-    except ProviderNotConfigured as exc:
-        raise ServiceUnavailableError("评估模型未配置，无法解析职位描述") from exc
+    return eval_llm(
+        providers,
+        CallContext(user_id=user_id, usage_role=UsageRole.JD_PARSE),
+        message="评估模型未配置，无法解析职位描述",
+    )
 
 
 def _uses(dependant: Dependant, target: object) -> bool:
