@@ -3,6 +3,10 @@
     "version": 1,
     "hash": "906c99fff1a59216"
   },
+  "interviewer": {
+    "version": 1,
+    "hash": "aee7b0a3395cb043"
+  },
   "jd_parse": {
     "version": 1,
     "hash": "b07539babbbb2b5b"
