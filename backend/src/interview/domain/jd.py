@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import uuid
 from math import fsum, isclose
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -87,8 +88,14 @@ class JDParsed(BaseModel):
         return terms
 
 
-async def parse_jd(llm: LLMProvider, text: str) -> StructuredResult[JDParsed]:
+async def parse_jd(
+    llm: LLMProvider, text: str, *, interview_id: uuid.UUID | None = None
+) -> StructuredResult[JDParsed]:
     JDText(text=text)  # 领域入口也拒绝超长/空白输入，不产生无效的模型调用。
     prompt = get_prompt_library().render("jd_parse", jd_text=text)
-    with span("jd.parse", role=UsageRole.JD_PARSE.value):
+    with span(
+        "jd.parse",
+        interview_id=str(interview_id) if interview_id is not None else None,
+        role=UsageRole.JD_PARSE.value,
+    ):
         return await generate_structured(llm, prompt, JDParsed, max_tokens=4096)

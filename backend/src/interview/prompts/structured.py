@@ -16,7 +16,9 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass, field
+from typing import Any
 
 import structlog
 from opentelemetry import trace
@@ -93,11 +95,13 @@ def _summarize(exc: ValidationError) -> str:
     return "\n".join(lines)
 
 
-def parse[T: BaseModel](text: str, schema: type[T]) -> T:
+def parse[T: BaseModel](
+    text: str, schema: type[T], *, context: Mapping[str, Any] | None = None
+) -> T:
     if not text.strip():
         raise _Invalid("- (整体)：输出为空")
     try:
-        return schema.model_validate_json(extract_json(text))
+        return schema.model_validate_json(extract_json(text), context=context)
     except ValidationError as exc:
         raise _Invalid(_summarize(exc)) from exc
 
@@ -126,8 +130,12 @@ async def generate_structured[T: BaseModel](
     timeout_s: float | None = None,
     max_retries: int = DEFAULT_MAX_RETRIES,
     json_mode: bool = True,
+    context: Mapping[str, Any] | None = None,
 ) -> StructuredResult[T]:
-    """调用大模型生成符合 schema 的对象。max_tokens 要留足，JSON 被截断会被当作非法输出重试。"""
+    """调用大模型生成符合 schema 的对象。max_tokens 要留足，JSON 被截断会被当作非法输出重试。
+
+    context 透传给 model_validate_json()，供模型校验器读取（如计划阶段的 PlanContext）。
+    """
     current = trace.get_current_span()
     current.set_attributes(
         {
@@ -153,7 +161,7 @@ async def generate_structured[T: BaseModel](
                 extra=extra,
             )
         try:
-            value = parse(reply.text, schema)
+            value = parse(reply.text, schema, context=context)
         except _Invalid as exc:
             errors.append(exc.summary)
             log.warning(
