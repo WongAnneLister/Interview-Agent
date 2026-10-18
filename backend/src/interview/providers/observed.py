@@ -70,8 +70,8 @@ _is_retry: ContextVar[bool] = ContextVar("provider_call_is_retry", default=False
 
 @contextmanager
 def marked_retry(enabled: bool = True) -> Generator[None]:
-    """块内发起的厂商调用记为重试（重试也是成本，用量表 is_retry=true）。"""
-    token = _is_retry.set(enabled)
+    """块内发起的厂商调用记为重试；嵌套时保留外层的重试标记。"""
+    token = _is_retry.set(enabled or _is_retry.get())
     try:
         yield
     finally:

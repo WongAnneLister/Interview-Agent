@@ -41,7 +41,7 @@ from interview.providers.base import (
     RateLimited,
 )
 from interview.providers.fake import FakeLLM, FakeSTT, FakeTTS
-from interview.providers.observed import ObservedLLM
+from interview.providers.observed import ObservedLLM, marked_retry
 from interview.providers.registry import (
     CallContext,
     ProviderFactories,
@@ -212,6 +212,8 @@ async def test_complete_fails_over_and_marks_usage(
     with capture_logs() as logs:
         result = await llm.complete(MESSAGES, **GEN)
     assert result.text == "备用回答"
+    assert (result.provider, result.model) == ("fake", "backup-m")
+    assert llm.model == "front-m"
     (event,) = [e for e in logs if e["event"] == "llm_fallback"]
     assert event["error"] == "ProviderTimeout"
     assert (event["provider"], event["fallback_model"]) == ("fake", "backup-m")
@@ -321,6 +323,17 @@ async def test_complete_uses_context_usage_role(
     assert (a[Attr.AGENT_ROLE], a["provider.slot"], a[Attr.IS_EVAL]) == ("report", "llm_eval", True)
     assert a[LF.OUTPUT] == "你好，我是面试官"
     assert {(e.role, e.is_eval) for e in store} == {(UsageRole.REPORT, True)}
+
+
+async def test_nested_marked_retry_keeps_outer_flag(
+    store: list[UsageEvent], exporter: InMemorySpanExporter
+) -> None:
+    llm = make_registry(store).llm("llm_eval", ctx())
+    with marked_retry(), marked_retry(False):
+        await llm.complete(MESSAGES, **GEN)
+    assert all(event.is_retry for event in store)
+    (s,) = exporter.get_finished_spans()
+    assert attrs_of(s)["is_retry"] is True
 
 
 async def test_error_span_without_usage(

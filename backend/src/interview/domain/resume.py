@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import re
 from io import BytesIO
 
@@ -218,6 +219,4 @@ async def parse_resume(llm: LLMProvider, text: str) -> StructuredResult[ResumePa
     prompt = get_prompt_library().render("resume_parse", resume_text=text)
     with span("resume.parse", role=UsageRole.RESUME_PARSE.value):
         result = await generate_structured(llm, prompt, ResumeParsed, max_tokens=4096)
-    return StructuredResult(
-        redact_contacts(result.value), result.prompt_id, result.prompt_version, result.retries
-    )
+    return dataclasses.replace(result, value=redact_contacts(result.value))

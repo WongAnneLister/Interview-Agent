@@ -142,7 +142,13 @@ class OpenAICompatLLM:
             extra=extra,
         ) as stream:
             text = "".join([chunk async for chunk in stream])
-        return LLMResult(text=text, usage=stream.usage, first_token_ms=stream.first_latency_ms)
+        return LLMResult(
+            text=text,
+            usage=stream.usage,
+            first_token_ms=stream.first_latency_ms,
+            provider=self.provider,
+            model=self.model,
+        )
 
     async def aclose(self) -> None:
         await self._client.close()

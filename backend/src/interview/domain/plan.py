@@ -544,4 +544,6 @@ async def generate_plan(
         questions=len(plan.questions),
         covered=sum(1 for item in competencies if item.covered),
     )
-    return StructuredResult(plan, result.prompt_id, result.prompt_version, result.retries)
+    return StructuredResult(
+        plan, result.prompt_id, result.prompt_version, result.retries, result.provider, result.model
+    )

@@ -49,6 +49,8 @@ class StructuredResult[T: BaseModel]:
     prompt_id: str
     prompt_version: int
     retries: int  # 0 表示第一次就成功
+    provider: str = ""  # 产出 value 的那次调用实际用的厂商和型号（可能是备用）
+    model: str = ""
 
 
 @dataclass
@@ -178,6 +180,8 @@ async def generate_structured[T: BaseModel](
             ]
             continue
         current.set_attributes({"structured.retries": attempt, "structured.failed": False})
-        return StructuredResult(value, prompt.id, prompt.version, attempt)
+        return StructuredResult(
+            value, prompt.id, prompt.version, attempt, reply.provider, reply.model
+        )
     current.set_attributes({"structured.retries": max_retries, "structured.failed": True})
     raise StructuredOutputError(prompt.id, prompt.version, max_retries + 1, errors)

@@ -97,6 +97,9 @@ class LLMResult:
     text: str
     usage: LLMUsage | None
     first_token_ms: float | None
+    # 实际作答的厂商和型号；主备切换后是备用的，LLMProvider.model 始终是主实例的
+    provider: str
+    model: str
 
 
 @dataclass(frozen=True)
