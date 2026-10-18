@@ -56,6 +56,11 @@
 | 2026-10-17 | 不同时段、网络下首 token 有约 100 ms 波动；单次测量还出现过 588–2001 ms 的大幅波动 | live 测试与两次实测 | 结论以多次运行为准 |
 | 2026-10-17 | **JSON 模式三家都可用**：`response_format={"type": "json_object"}` 经 extra_body 传入，百炼 flash、开思考的 max、DeepSeek 都一次输出合法 JSON（无重试）；完整结构化输出（约 3 个字段）耗时 flash 2.8 秒、DeepSeek 2.1 秒、max 开思考 14.7 秒 | live 测试 test_structured_live（单次） | 实时评估用 flash 也接近 2.5 秒上限，ADR-0002 需要用真实评估器输出再测；结构化输出一律再经 Pydantic 校验 |
 | 2026-10-17 | DeepSeek 默认开启思考，用 `thinking: {"type": "disabled"}` 关闭；百炼用 `enable_thinking: false` | 官方文档 + 实测用量中 reasoning_tokens 为 0 | 已写入角色默认 EXTRA_BODY |
+| 2026-10-18 | **真实评估器输出（约 290 token）在百炼上都达不到 2.5 秒**：`evaluate()` 完整耗时 max 关思考 P50 6232 / P95 7743 ms（15 次，无重试）；flash 关思考单次调用 P50 8306 ms，比 max 还慢 | `test_evaluator_live.py`（9bc310b）15 次；另用同一提示词直接调用各 5 次 | 实时评估不能用百炼的这两个型号，见 [challenges.md C1](../challenges.md#c1-实时评估可能超过-25-秒) |
+| 2026-10-18 | 慢在**出字速度**，不在首 token：首 token 三家都是 0.6–0.75 秒；之后每个输出 token max 约 18 ms、flash 约 14 ms、deepseek-flash 约 4 ms | 同一提示词（输入约 1200 token）直接调用各 5 次，按（完整耗时 − 首 token）/ 输出 token 计算 | 输出越长越慢；精简输出字段对百炼型号帮助有限，对 DeepSeek 有效 |
+| 2026-10-18 | **flash 输出更啰嗦**：同一题输出 380–613 token（max 约 290），且追问方向常常照抄要点原文（6 次里 3 次含“扩容或限流”），被校验拦下后连续 3 次都改不过来，15 次评估直接失败 | 同上；live 测试 flash 第一次即抛 `StructuredOutputError` | flash 不适合做评估器 |
+| 2026-10-18 | **deepseek-flash 关思考最快**：`evaluate()` 完整耗时 P50 2194 / P95 3867 ms（15 次）；15 次里 6 次因追问方向含要点原文触发一次格式重试，每次多约 1.5 秒；不重试的 9 次都在 1.6–2.4 秒 | `test_evaluator_live.py` 15 次 + 10 次统计重试原因 | 唯一接近 2.5 秒的型号；减少重试是压 P95 的关键 |
+| 2026-10-18 | 打分水平：同一段回答 max 15 次都给 4 分，deepseek-flash 13 次 3 分、2 次 4 分；证据都有效，没有触发证据重评 | 同上 | 实时评分只用于决定追问，不对外展示，偏严可以接受；报告评分仍固定一个型号 |
 
 ## 对照 PRD 延迟预算（候选人说完 → 听到面试官首个字）
 
