@@ -30,6 +30,7 @@ def environment() -> str:
     for label, role in (
         ("前台大模型", settings.llm_front),
         ("评估大模型", settings.llm_eval),
+        ("实时评估大模型", settings.llm_live_eval),
         ("备用大模型", settings.llm_fallback),
         ("语音识别", settings.stt),
         ("语音合成", settings.tts),

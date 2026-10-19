@@ -22,6 +22,7 @@ from interview.config import (
     LLMEvalSettings,
     LLMFallbackSettings,
     LLMFrontSettings,
+    LLMLiveEvalSettings,
     ProvidersSettings,
     STTSettings,
     TTSSettings,
@@ -43,6 +44,7 @@ def provider_settings() -> ProvidersSettings:
     return ProvidersSettings(
         llm_front=read(LLMFrontSettings),
         llm_eval=read(LLMEvalSettings),
+        llm_live_eval=read(LLMLiveEvalSettings),
         llm_fallback=read(LLMFallbackSettings),
         stt=read(STTSettings),
         tts=read(TTSSettings),

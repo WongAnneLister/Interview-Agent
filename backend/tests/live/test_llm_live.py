@@ -17,6 +17,7 @@ from interview.config import (
     LLMEvalSettings,
     LLMFallbackSettings,
     LLMFrontSettings,
+    LLMLiveEvalSettings,
     ProvidersSettings,
 )
 from interview.providers.base import ChatMessage
@@ -37,6 +38,7 @@ def provider_settings() -> ProvidersSettings:
     return ProvidersSettings.model_construct(
         llm_front=read(LLMFrontSettings),
         llm_eval=read(LLMEvalSettings),
+        llm_live_eval=read(LLMLiveEvalSettings),
         llm_fallback=read(LLMFallbackSettings),
         bailian=read(BailianSettings),
         deepseek=read(DeepSeekSettings),
@@ -44,7 +46,7 @@ def provider_settings() -> ProvidersSettings:
 
 
 @pytest.mark.live
-@pytest.mark.parametrize("slot", ["llm_front", "llm_eval", "llm_fallback"])
+@pytest.mark.parametrize("slot", ["llm_front", "llm_eval", "llm_live_eval", "llm_fallback"])
 async def test_stream_chat(slot: str, capsys: pytest.CaptureFixture[str]) -> None:
     settings = provider_settings()
     role = getattr(settings, slot)

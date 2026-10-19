@@ -1,7 +1,8 @@
-"""真实调用 llm_eval 连续评估一段固定问答（make test-live）。
+"""真实调用实时评估模型连续评估一段固定问答（make test-live）。
 
 打印完整耗时的 P50 / P95、每次 retries 和 evidence_retried，不对耗时做断言。
-未配置 llm_eval 时跳过；用量写入用一个丢弃用量的 stub 会话，避免 live 测试依赖数据库。
+用 llm_live_eval，未配置时回退到 llm_eval，两个都未配置时跳过。
+用量写入用一个丢弃用量的 stub 会话，避免 live 测试依赖数据库。
 """
 
 from __future__ import annotations
@@ -107,16 +108,16 @@ def percentile(values: list[int], fraction: float) -> int:
 @pytest.mark.live
 async def test_evaluate_fixed_answer(capsys: pytest.CaptureFixture[str]) -> None:
     settings = provider_settings()
-    if not settings.llm_eval.configured:
-        pytest.skip("LLM_EVAL_PROVIDER / LLM_EVAL_MODEL 未配置")
+    role = settings.llm_live_eval if settings.llm_live_eval.configured else settings.llm_eval
+    if not role.configured:
+        pytest.skip("LLM_LIVE_EVAL_* 和 LLM_EVAL_* 都未配置")
     registry = ProviderRegistry(
         settings,
         sessionmaker=cast(Any, DiscardSessionmaker()),
     )
     try:
         try:
-            llm = registry.llm(
-                "llm_eval",
+            llm = registry.live_eval_llm(
                 CallContext(
                     user_id=uuid.uuid4(),
                     interview_id=INTERVIEW_ID,
@@ -145,7 +146,7 @@ async def test_evaluate_fixed_answer(capsys: pytest.CaptureFixture[str]) -> None
 
     latencies = [result.latency_ms for result in results]
     with capsys.disabled():
-        print(f"\n[evaluator] {settings.llm_eval.provider}/{settings.llm_eval.model}，15 次")
+        print(f"\n[evaluator] {role.provider}/{role.model}，15 次")
         for index, result in enumerate(results, start=1):
             print(
                 f"  #{index:02d} {result.latency_ms} ms  retries={result.retries}  "

@@ -66,7 +66,7 @@ def candidates(extra: list[str]) -> list[Candidate]:
     settings = provider_settings()
     found: list[Candidate] = []
     seen: set[tuple[str, str]] = set()
-    for label in ("llm_front", "llm_eval", "llm_fallback"):
+    for label in ("llm_front", "llm_eval", "llm_live_eval", "llm_fallback"):
         role: ProviderRoleSettings = getattr(settings, label)
         key = (role.provider, role.model)
         if role.configured and key not in seen:

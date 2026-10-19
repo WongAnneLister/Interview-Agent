@@ -37,7 +37,7 @@ class Rating(BaseModel):
 
 
 @pytest.mark.live
-@pytest.mark.parametrize("slot", ["llm_front", "llm_eval", "llm_fallback"])
+@pytest.mark.parametrize("slot", ["llm_front", "llm_eval", "llm_live_eval", "llm_fallback"])
 async def test_structured_output(
     slot: str, tmp_path_factory: pytest.TempPathFactory, capsys: pytest.CaptureFixture[str]
 ) -> None:

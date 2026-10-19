@@ -22,6 +22,7 @@ from interview.config import (
     LLMEvalSettings,
     LLMFallbackSettings,
     LLMFrontSettings,
+    LLMLiveEvalSettings,
     ObservabilitySettings,
     ProviderRoleSettings,
     ProvidersSettings,
@@ -166,6 +167,55 @@ def test_default_factories_build_fakes_from_settings() -> None:
     assert isinstance(registry.llm("llm_front", ctx()), ObservedLLM)  # 未配置备用时不包主备
     assert registry.llm("llm_eval", ctx()).model == "eval-m"
     assert (registry.stt(ctx()).model, registry.tts(ctx()).model) == ("stt-m", "tts-m")
+
+
+def live_eval_settings(live_provider: str, live_model: str) -> ProvidersSettings:
+    return ProvidersSettings(
+        llm_front=role(LLMFrontSettings, "fake", "front-m"),
+        llm_eval=role(LLMEvalSettings, "fake", "eval-m"),
+        llm_live_eval=role(LLMLiveEvalSettings, live_provider, live_model),
+        llm_fallback=role(LLMFallbackSettings, "", ""),
+        stt=role(STTSettings, "fake", "stt-m"),
+        tts=role(TTSSettings, "fake", "tts-m"),
+    )
+
+
+def test_live_eval_uses_its_own_role_when_configured() -> None:
+    registry = ProviderRegistry(live_eval_settings("fake", "live-m"))
+    assert registry.live_eval_llm(ctx()).model == "live-m"
+    assert registry.llm("llm_eval", ctx()).model == "eval-m"
+
+
+def test_live_eval_falls_back_to_llm_eval_when_not_configured() -> None:
+    registry = ProviderRegistry(live_eval_settings("", ""))
+    assert registry.live_eval_llm(ctx()).model == "eval-m"
+
+
+def test_live_eval_role_defaults_to_unconfigured() -> None:
+    # 只构造旧字段的调用方（测试、benchmark 工具）不需要提供 llm_live_eval
+    settings = ProvidersSettings(
+        llm_front=role(LLMFrontSettings, "fake", "front-m"),
+        llm_eval=role(LLMEvalSettings, "fake", "eval-m"),
+        llm_fallback=role(LLMFallbackSettings, "", ""),
+        stt=role(STTSettings, "fake", "stt-m"),
+        tts=role(TTSSettings, "fake", "tts-m"),
+    )
+    assert not settings.llm_live_eval.configured
+    assert ProviderRegistry(settings).live_eval_llm(ctx()).model == "eval-m"
+
+
+async def test_live_eval_usage_is_recorded_under_its_slot(
+    store: list[UsageEvent], exporter: InMemorySpanExporter
+) -> None:
+    registry = ProviderRegistry(
+        live_eval_settings("fake", "live-m"),
+        sessionmaker=cast(async_sessionmaker[AsyncSession], lambda: RecordingSession(store)),
+        prices=PriceTable(),
+    )
+    await registry.live_eval_llm(ctx()).complete(MESSAGES, **GEN)
+    assert {(e.role, e.model) for e in store} == {(UsageRole.EVAL, "live-m")}
+    (s,) = exporter.get_finished_spans()
+    assert attrs_of(s)["provider.slot"] == "llm_live_eval"
 
 
 async def test_adapters_are_created_once_and_closed(store: list[UsageEvent]) -> None:

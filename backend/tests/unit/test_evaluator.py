@@ -23,6 +23,7 @@ from interview.domain.evaluator import (
     EvaluationResult,
     TranscriptTurn,
     evaluate,
+    focus_leaks_key_point,
     normalize_quote,
     validate_evidence,
 )
@@ -290,7 +291,34 @@ async def test_follow_up_over_limit_becomes_next_question() -> None:
     assert result.next_action == NextAction.NEXT_QUESTION
     assert result.follow_up_focus == ""
     assert result.action_overridden is True
+    assert result.override_reason == "follow_up_limit"
     assert len(llm.calls) == 1
+
+
+@pytest.mark.parametrize(
+    "focus",
+    ["请说说失败重试", "关于 失败、重试 的细节？", "请说说ＦＡＩＬ失败重试"],
+    ids=["exact", "spaces-and-punctuation", "fullwidth-prefix"],
+)
+async def test_focus_leaking_key_point_becomes_next_question(focus: str) -> None:
+    # 不重试：代码直接改成换题，结果确定，也省一次调用（challenges C1）
+    llm = FakeLLM(reply=reply_json(draft(follow_up_focus=focus)), chunk_size=10_000)
+    before = metric("interview_evaluator_action_overridden_total", reason="focus_leak")
+    result = await evaluate(llm, INPUT, interview_id=INTERVIEW_ID)
+
+    assert len(llm.calls) == 1
+    assert result.retries == 0
+    assert result.next_action == NextAction.NEXT_QUESTION
+    assert result.follow_up_focus == ""
+    assert (result.action_overridden, result.override_reason) == (True, "focus_leak")
+    assert result.score == 4 and len(result.evidence) == 1
+    assert metric("interview_evaluator_action_overridden_total", reason="focus_leak") == before + 1
+
+
+def test_focus_leak_ignores_short_key_points() -> None:
+    assert not focus_leaks_key_point("能讲讲为什么用它吗", ["为什么", "用它"])
+    assert focus_leaks_key_point("能讲讲失败重试吗", ["失败重试"])
+    assert not focus_leaks_key_point("能举个线上故障的例子吗", ["失败重试", "幂等处理"])
 
 
 async def test_non_follow_up_action_clears_focus() -> None:
@@ -311,9 +339,8 @@ async def test_non_follow_up_action_clears_focus() -> None:
     [
         "not json",
         reply_json(draft(follow_up_focus="")),
-        reply_json(draft(follow_up_focus="请说说失败重试")),
     ],
-    ids=["invalid-json", "blank-focus", "focus-contains-key-point"],
+    ids=["invalid-json", "blank-focus"],
 )
 async def test_invalid_draft_is_retried_by_generate_structured(bad_reply: str) -> None:
     llm = scripted(bad_reply, reply_json(draft()))
@@ -401,6 +428,7 @@ async def test_span_attributes_and_metrics(
     assert attrs["evaluator.evidence_retried"] is False
     assert attrs["evaluator.score_nulled"] is False
     assert attrs["evaluator.action_overridden"] is False
+    assert attrs["evaluator.override_reason"] == ""
     latency = attrs["evaluator.latency_ms"]
     assert isinstance(latency, int) and latency >= 0
     assert attrs["prompt.id"] == "evaluate_answer"

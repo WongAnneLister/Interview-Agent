@@ -108,6 +108,12 @@ class LLMEvalSettings(ProviderRoleSettings):
     model_config = _config("LLM_EVAL_")
 
 
+class LLMLiveEvalSettings(ProviderRoleSettings):
+    """面试中的实时评估：要在 2.5 秒内决定追问还是换题，选快的型号（实测见 challenges.md C1）。"""
+
+    model_config = _config("LLM_LIVE_EVAL_")
+
+
 class LLMFallbackSettings(ProviderRoleSettings):
     model_config = _config("LLM_FALLBACK_")
 
@@ -195,6 +201,10 @@ class ProvidersSettings(BaseModel):
     llm_fallback: LLMFallbackSettings
     stt: STTSettings
     tts: TTSSettings
+    # 给默认值：未配置时视为没有这个角色，调用方回退到 llm_eval；只构造了旧字段的调用方不受影响
+    llm_live_eval: LLMLiveEvalSettings = Field(
+        default_factory=lambda: LLMLiveEvalSettings.model_construct()
+    )
     bailian: BailianSettings = Field(default_factory=lambda: BailianSettings.model_construct())
     deepseek: DeepSeekSettings = Field(default_factory=lambda: DeepSeekSettings.model_construct())
 
@@ -234,6 +244,7 @@ def load_settings(env_file: Path | None = DEFAULT_ENV_FILE) -> Settings:
     s3 = _load(S3Settings, env_file, errors)
     llm_front = _load(LLMFrontSettings, env_file, errors)
     llm_eval = _load(LLMEvalSettings, env_file, errors)
+    llm_live_eval = _load(LLMLiveEvalSettings, env_file, errors)
     llm_fallback = _load(LLMFallbackSettings, env_file, errors)
     stt = _load(STTSettings, env_file, errors)
     tts = _load(TTSSettings, env_file, errors)
@@ -259,6 +270,7 @@ def load_settings(env_file: Path | None = DEFAULT_ENV_FILE) -> Settings:
         providers=ProvidersSettings(
             llm_front=llm_front,
             llm_eval=llm_eval,
+            llm_live_eval=llm_live_eval,
             llm_fallback=llm_fallback,
             stt=stt,
             tts=tts,

@@ -5,11 +5,11 @@ from __future__ import annotations
 import time
 import unicodedata
 import uuid
-from collections.abc import Mapping, Sequence
-from typing import Any, Self, cast
+from collections.abc import Sequence
+from typing import Literal, Self
 
 import structlog
-from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from interview.db.models import NextAction, TurnRole, UsageRole
 from interview.domain.plan import PlanCompetency, Question
@@ -28,6 +28,11 @@ log = structlog.get_logger(__name__)
 
 _EVIDENCE_COUNTER = counter("evaluator_evidence", "评估器证据保留或丢弃的数量", ["outcome"])
 _SCORE_NULLED_COUNTER = counter("evaluator_score_nulled", "因没有有效证据而把分数置空的次数")
+_OVERRIDE_COUNTER = counter(
+    "evaluator_action_overridden", "follow_up 被代码改成 next_question 的次数", ["reason"]
+)
+
+OverrideReason = Literal["follow_up_limit", "focus_leak"]
 
 
 class TranscriptTurn(BaseModel):
@@ -79,19 +84,19 @@ class EvaluationDraft(BaseModel):
     rationale: str
 
     @model_validator(mode="after")
-    def validate_focus(self, info: ValidationInfo) -> Self:
-        context = cast(Mapping[str, Any] | None, info.context)
-        key_points = context.get("key_points") if context else None
-        if not isinstance(key_points, (list, tuple)):
-            raise ValueError("缺少评估校验上下文")
-        normalized_focus = normalize_quote(self.follow_up_focus)
-        if self.next_action == NextAction.FOLLOW_UP and not normalized_focus:
+    def validate_focus(self) -> Self:
+        if self.next_action == NextAction.FOLLOW_UP and not normalize_quote(self.follow_up_focus):
             raise ValueError("追问方向不能为空")
-        for point in cast(Sequence[str], key_points):
-            normalized_point = normalize_quote(point)
-            if len(normalized_point) >= MIN_QUOTE_CHARS and normalized_point in normalized_focus:
-                raise ValueError("追问方向不能包含要点原文")
         return self
+
+
+def focus_leaks_key_point(focus: str, key_points: Sequence[str]) -> bool:
+    """追问方向里出现了要点原文（归一化后 ≥ MIN_QUOTE_CHARS 的子串），等于把答案告诉候选人。"""
+    normalized_focus = normalize_quote(focus)
+    return any(
+        len(point) >= MIN_QUOTE_CHARS and point in normalized_focus
+        for point in map(normalize_quote, key_points)
+    )
 
 
 class EvidenceQuote(BaseModel):
@@ -114,6 +119,7 @@ class EvaluationResult(BaseModel):
     evidence_dropped: int
     evidence_retried: bool
     action_overridden: bool
+    override_reason: OverrideReason | None  # 为什么改成了换题
     provider: str  # 实际作答的厂商和型号，切到备用时是备用的
     model: str
     prompt_version: str
@@ -208,7 +214,6 @@ async def _evaluate_draft(
         _render(data, evidence_feedback=evidence_feedback),
         EvaluationDraft,
         max_tokens=2048,
-        context={"key_points": data.question.key_points},
     )
 
 
@@ -247,11 +252,17 @@ async def evaluate(
         if score_nulled:
             _SCORE_NULLED_COUNTER.inc()
         action = draft.next_action
-        action_overridden = (
-            action == NextAction.FOLLOW_UP and data.follow_ups >= data.max_follow_ups
-        )
+        override_reason: OverrideReason | None = None
+        if action == NextAction.FOLLOW_UP:
+            # 两种情况都由代码改成换题，不让模型重试：结果确定，也省一次调用（C1 实测重试多 1.5 秒）
+            if data.follow_ups >= data.max_follow_ups:
+                override_reason = "follow_up_limit"
+            elif focus_leaks_key_point(draft.follow_up_focus, data.question.key_points):
+                override_reason = "focus_leak"
+        action_overridden = override_reason is not None
         if action_overridden:
             action = NextAction.NEXT_QUESTION
+            _OVERRIDE_COUNTER.labels(reason=override_reason).inc()
         focus = "" if action != NextAction.FOLLOW_UP else draft.follow_up_focus
         latency_ms = int((time.perf_counter() - started) * 1000)
         current.set_attributes(
@@ -262,6 +273,7 @@ async def evaluate(
                 "evaluator.evidence_retried": evidence_retried,
                 "evaluator.score_nulled": score_nulled,
                 "evaluator.action_overridden": action_overridden,
+                "evaluator.override_reason": override_reason or "",
                 "evaluator.latency_ms": latency_ms,
             }
         )
@@ -278,6 +290,7 @@ async def evaluate(
             evidence_dropped=evidence_dropped,
             evidence_retried=evidence_retried,
             action_overridden=action_overridden,
+            override_reason=override_reason,
             provider=used.provider,
             model=used.model,
             prompt_version=f"{used.prompt_id}@{used.prompt_version}",
@@ -293,6 +306,7 @@ async def evaluate(
         evidence_retried=result.evidence_retried,
         score_nulled=score_nulled,
         action_overridden=result.action_overridden,
+        override_reason=result.override_reason,
         retries=result.retries,
         latency_ms=result.latency_ms,
     )
