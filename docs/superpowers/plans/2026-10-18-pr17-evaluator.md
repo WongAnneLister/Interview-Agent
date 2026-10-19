@@ -168,4 +168,4 @@ def validate_evidence(evidence: Sequence[DraftEvidence], turns: Sequence[Transcr
 
 ## live 实测（默认不跑）
 
-`backend/tests/live/test_evaluator_live.py`（`@pytest.mark.live`，照 `tests/live/` 已有写法）：经注册表取 `llm_eval`（usage_role=EVAL），对一段固定的虚构问答连续调用 `evaluate()` 15 次，打印完整耗时 P50 / P95、每次的 retries 和 evidence_retried，并断言结果都能通过校验；不对耗时做断言。用于 [challenges.md C1](../../challenges.md#c1-实时评估可能超过-25-秒) 的型号选择，`make test-live` 手动运行，会产生少量费用。
+`backend/tests/live/test_evaluator_live.py`（`@pytest.mark.live`，照 `tests/live/` 已有写法）：经注册表取 `llm_eval`（usage_role=EVAL），对一段固定的虚构问答连续调用 `evaluate()` 15 次，打印完整耗时 P50 / P95、每次的 retries 和 evidence_retried，并断言结果都能通过校验；不对耗时做断言。用于 [challenges.md C1](../../challenges.md) 的型号选择，`make test-live` 手动运行，会产生少量费用。
