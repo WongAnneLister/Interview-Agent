@@ -214,6 +214,7 @@ class Interview(UserOwned, Base):
     status: Mapped[InterviewStatus] = mapped_column(
         _enum(InterviewStatus, "interview_status"), default=InterviewStatus.DRAFT
     )
+    state_json: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     started_at: Mapped[datetime | None]
     ended_at: Mapped[datetime | None]
     created_at: Mapped[datetime] = _created_at()
@@ -281,6 +282,7 @@ class Evaluation(UserOwned, Base):
     competency: Mapped[str] = mapped_column(String(64))
     score: Mapped[int | None] = mapped_column(SmallInteger)
     evidence_json: Mapped[list[Any]] = mapped_column(JSONB, server_default="[]")
+    detail_json: Mapped[dict[str, Any]] = mapped_column(JSONB, server_default="{}")
     next_action: Mapped[NextAction | None] = mapped_column(_enum(NextAction, "next_action"))
     model: Mapped[str] = mapped_column(String(128))
     prompt_version: Mapped[str] = mapped_column(String(32))
