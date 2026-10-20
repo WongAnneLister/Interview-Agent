@@ -12,10 +12,11 @@ import uuid
 from collections.abc import AsyncIterator
 from typing import Annotated
 
-from fastapi import Depends, FastAPI, Request
+from fastapi import Depends, FastAPI
 from fastapi.dependencies.models import Dependant
-from fastapi.routing import APIRoute, iter_route_contexts
+from fastapi.routing import APIRoute, APIWebSocketRoute, iter_route_contexts
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.requests import HTTPConnection
 
 from interview.api.errors import ServiceUnavailableError
 from interview.api.resources import Resources
@@ -30,8 +31,9 @@ from interview.storage.base import ObjectStore
 PUBLIC_PATHS = frozenset({"/healthz", "/readyz", "/metrics"})
 
 
-def get_resources(request: Request) -> Resources:
-    resources: Resources = request.app.state.resources
+def get_resources(connection: HTTPConnection) -> Resources:
+    """HTTPConnection 同时覆盖 HTTP 和 WebSocket：写成 Request 时 WebSocket 路由拿不到它。"""
+    resources: Resources = connection.app.state.resources
     return resources
 
 
@@ -113,10 +115,11 @@ def routes_without_user(app: FastAPI) -> list[str]:
     # include_router 的路由在 FastAPI 0.143 中是惰性挂载；使用有效上下文才能
     # 同时看到完整前缀和 include_router(..., dependencies=...) 继承的依赖。
     for route in iter_route_contexts(app.routes):
-        if (
-            isinstance(route.original_route, APIRoute)
-            and route.path not in PUBLIC_PATHS
-            and not _uses(route.dependant, get_current_user_id)
-        ):
-            missing.append(f"{sorted(route.methods or [])} {route.path}")
+        original = route.original_route
+        if not isinstance(original, APIRoute | APIWebSocketRoute) or route.path in PUBLIC_PATHS:
+            continue
+        # WebSocket 路由的有效上下文不带 dependant（0.143），用原路由的
+        dependant: Dependant = route.dependant or original.dependant
+        if not _uses(dependant, get_current_user_id):
+            missing.append(f"{sorted(route.methods or ['WS'])} {route.path}")
     return missing

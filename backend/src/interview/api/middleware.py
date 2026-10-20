@@ -88,6 +88,17 @@ class InterviewAPI(FastAPI):
     """FastAPI 子类：在整个中间件栈之外处理请求 ID、访问日志和兜底异常。"""
 
     _http_app: ASGIApp | None = None
+    # 不经过 HTTP 路由的模型（如 WebSocket 消息），并入 OpenAPI 的 components.schemas 供前端生成类型
+    extra_schemas: dict[str, Any] | None = None
+
+    def openapi(self) -> dict[str, Any]:
+        cached = self.openapi_schema is not None
+        schema = super().openapi()
+        if not cached and self.extra_schemas:
+            components = schema.setdefault("components", {}).setdefault("schemas", {})
+            for name, value in self.extra_schemas.items():
+                components.setdefault(name, value)
+        return schema
 
     def configure_cors(self, origins: list[str]) -> None:
         self._http_app = CORSMiddleware(

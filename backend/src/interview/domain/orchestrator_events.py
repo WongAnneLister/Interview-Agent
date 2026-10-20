@@ -25,36 +25,45 @@ DEFAULT_CONFIG = OrchestratorConfig()
 type CommandName = Literal["pause", "resume", "repeat", "skip", "end"]
 
 
-class InterviewerDelta(BaseModel):
+class WireEvent(BaseModel):
+    """推给客户端的消息。
+
+    导出 JSON Schema 时 type 等带默认值的字段也标为必填，前端生成的类型才能按 type 收窄。
+    """
+
+    model_config = ConfigDict(json_schema_serialization_defaults_required=True)
+
+
+class InterviewerDelta(WireEvent):
     type: Literal["interviewer_delta"] = "interviewer_delta"
     text: str
 
 
-class InterviewerSentence(BaseModel):
+class InterviewerSentence(WireEvent):
     type: Literal["interviewer_sentence"] = "interviewer_sentence"
     text: str
     transition: bool = False
 
 
-class InterviewerDone(BaseModel):
+class InterviewerDone(WireEvent):
     type: Literal["interviewer_done"] = "interviewer_done"
     turn_id: uuid.UUID
     text: str
 
 
-class StateEvent(BaseModel):
+class StateEvent(WireEvent):
     type: Literal["state"] = "state"
     value: Literal["listening", "thinking", "speaking", "paused"]
 
 
-class StageEvent(BaseModel):
+class StageEvent(WireEvent):
     type: Literal["stage"] = "stage"
     phase: Phase
     remaining_s: int
     total_remaining_s: int
 
 
-class EndedEvent(BaseModel):
+class EndedEvent(WireEvent):
     type: Literal["ended"] = "ended"
 
 

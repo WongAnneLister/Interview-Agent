@@ -47,6 +47,10 @@ class AppSettings(BaseSettings):
     web_origins: list[str] = Field(default_factory=list[str])
     # /readyz 每项依赖检查的超时（秒）；经 SSH 隧道连 VPS 时新建连接要 10 秒左右，开发时调大
     ready_check_timeout_s: float = Field(default=3.0, gt=0)
+    # 文字面试 WebSocket：这么多秒没收到客户端任何消息（含 ping）就视为断线；前端每 20 秒发一次 ping
+    ws_idle_timeout_s: float = Field(default=60.0, gt=0)
+    # 服务端推进超时（阶段、思考）的 tick 间隔（秒）
+    ws_tick_interval_s: float = Field(default=1.0, gt=0)
 
 
 class DatabaseSettings(BaseSettings):

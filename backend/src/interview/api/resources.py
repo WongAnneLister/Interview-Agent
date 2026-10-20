@@ -7,6 +7,7 @@ lifespan 启动时创建（create_resources），关闭时释放（close）。
 from __future__ import annotations
 
 import asyncio
+import uuid
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 
@@ -35,6 +36,8 @@ class Resources:
     engine: AsyncEngine | None = None
     redis: Redis | None = None
     storage: ObjectStore | None = None
+    # 正在连接的文字面试（同一场同时只允许一个连接）；只在本进程内有效，见 challenges C15
+    live_interviews: set[uuid.UUID] = field(default_factory=set[uuid.UUID])
 
     async def close(self) -> None:
         await self.providers.aclose()

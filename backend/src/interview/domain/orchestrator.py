@@ -503,6 +503,12 @@ class InterviewOrchestrator:
             plan, state = self._require()
             if state.phase is Phase.ENDED:
                 return
+            if isinstance(event, Tick):
+                quiet = machine_step(plan, state, event, self._config.machine)
+                if quiet.directive is None and quiet.state.phase is state.phase:
+                    # 没有到期的超时：只推进内存里的时钟，不开 span、不写库（传输层每秒都会 tick）
+                    self._state = quiet.state
+                    return
             with self._turn_span(kind) as span:
                 span.span.set_attribute("state.phase", state.phase.value)
                 if isinstance(event, Command) and event.command == "end":
@@ -520,6 +526,25 @@ class InterviewOrchestrator:
                 ) as events:
                     async for item in events:
                         yield item
+
+    def snapshot(self) -> list[OrchestratorEvent]:
+        """重新连接时告诉客户端当前阶段和状态，不让面试官说话。"""
+        _, state = self._require()
+        return [self._stage_event(), StateEvent(value="paused" if state.paused else "listening")]
+
+    async def checkpoint(self) -> None:
+        """传输层异常断开后调用：中途放弃的事件流不会存状态，这里把内存里的状态写库。
+
+        状态机已进入 ended 但还没来得及收尾时，补做收尾（写 completed / aborted、触发 on_ended）。
+        """
+        async with self._lock:
+            if self._state is None or self._ended_called:
+                return
+            if self._state.phase is Phase.ENDED:
+                await self._finish_ended()
+                self._end_session_span()
+                return
+            await self._save_state()
 
     async def aclose(self) -> None:
         if self._closed:

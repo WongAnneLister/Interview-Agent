@@ -763,3 +763,39 @@ async def test_logs_do_not_contain_dialogue(make_harness: Any) -> None:
     logged = json.dumps(logs, ensure_ascii=False, default=str)
     assert "PRIVATE_CANDIDATE_TEXT" not in logged
     assert "PRIVATE_FRONT_TEXT" not in logged
+
+
+async def test_quiet_tick_skips_span_and_write(
+    make_harness: Any, exporter: InMemorySpanExporter
+) -> None:
+    harness = await make_harness()
+    await collect(harness.orchestrator.start(0))
+    saved = state_of(await fetch_interview(harness))
+    spans = len(exporter.get_finished_spans())
+    assert await collect(harness.orchestrator.on_tick(5_000)) == []
+    assert len(exporter.get_finished_spans()) == spans
+    assert state_of(await fetch_interview(harness)) == saved
+    state = harness.orchestrator.state
+    assert state is not None and state.clock_ms == 5_000
+
+    await harness.orchestrator.checkpoint()
+    assert state_of(await fetch_interview(harness)).clock_ms == 5_000
+    await harness.orchestrator.aclose()
+
+
+async def test_checkpoint_after_abandoned_stream_saves_advanced_state(make_harness: Any) -> None:
+    harness = await make_harness()
+    await collect(harness.orchestrator.start(0))
+    events = harness.orchestrator.on_command("skip", 1_000)
+    async for event in events:
+        if isinstance(event, StateEvent) and event.value == "speaking":
+            break
+    await events.aclose()  # 前端中途放弃：状态已推进，但 _respond 没来得及存
+    assert state_of(await fetch_interview(harness)).phase is Phase.OPENING
+    await harness.orchestrator.checkpoint()
+    assert state_of(await fetch_interview(harness)).phase is Phase.SELF_INTRO
+    assert (await fetch_interview(harness)).status is InterviewStatus.IN_PROGRESS
+    stage, state = harness.orchestrator.snapshot()
+    assert isinstance(stage, StageEvent) and stage.phase is Phase.SELF_INTRO
+    assert state == StateEvent(value="listening")
+    await harness.orchestrator.aclose()
