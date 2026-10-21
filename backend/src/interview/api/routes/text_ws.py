@@ -353,7 +353,9 @@ async def _serve(
         return
 
     async def on_ended(ended_id: uuid.UUID) -> None:
-        await report.request_report(ended_id, user_id=user_id)
+        # 与 POST 的 pending 落库和任务登记串行，避免结束回调同时创建同一报告行。
+        async with resources.report_requests:
+            await report.request_report(ended_id, user_id=user_id, runner=resources.reports)
 
     try:
         if status is None:

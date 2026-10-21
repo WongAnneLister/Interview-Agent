@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from interview.config import Settings
 from interview.db.session import create_engine, make_sessionmaker
+from interview.domain.report import ReportRunner
 from interview.observability.instrument import instrument_sqlalchemy
 from interview.providers.registry import ProviderRegistry
 from interview.storage.base import ObjectStore
@@ -36,10 +37,14 @@ class Resources:
     engine: AsyncEngine | None = None
     redis: Redis | None = None
     storage: ObjectStore | None = None
+    reports: ReportRunner | None = None
+    report_requests: asyncio.Lock = field(default_factory=asyncio.Lock)
     # 正在连接的文字面试（同一场同时只允许一个连接）；只在本进程内有效，见 challenges C15
     live_interviews: set[uuid.UUID] = field(default_factory=set[uuid.UUID])
 
     async def close(self) -> None:
+        if self.reports is not None:
+            await self.reports.aclose()
         await self.providers.aclose()
         if self.redis is not None:
             await self.redis.aclose()
@@ -94,4 +99,5 @@ def create_resources(settings: Settings) -> Resources:
         engine=engine,
         redis=redis,
         storage=S3ObjectStore(settings.s3),
+        reports=ReportRunner(sessionmaker, providers, settings.report),
     )

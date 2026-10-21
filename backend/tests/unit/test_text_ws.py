@@ -144,7 +144,10 @@ def build_api(
     monkeypatch.setattr(usage, "record_usage", ignore_usage)
     reports: list[uuid.UUID] = []
 
-    async def fake_report(interview_id: uuid.UUID, *, user_id: uuid.UUID) -> None:
+    async def fake_report(
+        interview_id: uuid.UUID, *, user_id: uuid.UUID, runner: report.ReportRunner | None
+    ) -> None:
+        assert runner is holder["resources"].reports
         reports.append(interview_id)
 
     monkeypatch.setattr(report, "request_report", fake_report)
