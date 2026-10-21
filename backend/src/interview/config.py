@@ -53,6 +53,17 @@ class AppSettings(BaseSettings):
     ws_tick_interval_s: float = Field(default=1.0, gt=0)
 
 
+class ReportSettings(BaseSettings):
+    """面试后的报告评定：按题并发、重试与整份报告的时限。"""
+
+    model_config = _config("REPORT_")
+
+    concurrency: int = Field(default=4, gt=0)
+    question_timeout_s: float = Field(default=40.0, gt=0)
+    question_attempts: int = Field(default=2, gt=0)
+    total_timeout_s: float = Field(default=90.0, gt=0)
+
+
 class DatabaseSettings(BaseSettings):
     model_config = _config("DATABASE_")
 
@@ -224,6 +235,7 @@ class Settings(BaseModel):
     langfuse: LangfuseSettings
     metrics: MetricsSettings
     cost: CostSettings
+    report: ReportSettings = Field(default_factory=ReportSettings)
 
 
 def _load[T: BaseSettings](cls: type[T], env_file: Path | None, missing: list[str]) -> T:
@@ -258,6 +270,7 @@ def load_settings(env_file: Path | None = DEFAULT_ENV_FILE) -> Settings:
     langfuse = _load(LangfuseSettings, env_file, errors)
     metrics = _load(MetricsSettings, env_file, errors)
     cost = _load(CostSettings, env_file, errors)
+    report = _load(ReportSettings, env_file, errors)
     if observability.enabled and not langfuse.configured:
         errors.append(
             "LANGFUSE_HOST / LANGFUSE_PUBLIC_KEY / LANGFUSE_SECRET_KEY"
@@ -285,6 +298,7 @@ def load_settings(env_file: Path | None = DEFAULT_ENV_FILE) -> Settings:
         langfuse=langfuse,
         metrics=metrics,
         cost=cost,
+        report=report,
     )
 
 

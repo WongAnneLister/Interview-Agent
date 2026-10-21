@@ -34,6 +34,10 @@ def clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
         "LANGFUSE_HOST",
         "LANGFUSE_PUBLIC_KEY",
         "LANGFUSE_SECRET_KEY",
+        "REPORT_CONCURRENCY",
+        "REPORT_QUESTION_TIMEOUT_S",
+        "REPORT_QUESTION_ATTEMPTS",
+        "REPORT_TOTAL_TIMEOUT_S",
     ):
         monkeypatch.delenv(name, raising=False)
 
@@ -144,4 +148,35 @@ def test_sample_ratio_out_of_range(monkeypatch: pytest.MonkeyPatch) -> None:
     set_required(monkeypatch)
     monkeypatch.setenv("OBSERVABILITY_SAMPLE_RATIO", "1.5")
     with pytest.raises(ConfigError, match="OBSERVABILITY_SAMPLE_RATIO"):
+        load_settings(env_file=None)
+
+
+def test_report_settings_load_from_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    set_required(monkeypatch)
+    monkeypatch.setenv("REPORT_CONCURRENCY", "2")
+    monkeypatch.setenv("REPORT_QUESTION_TIMEOUT_S", "12.5")
+    monkeypatch.setenv("REPORT_QUESTION_ATTEMPTS", "3")
+    monkeypatch.setenv("REPORT_TOTAL_TIMEOUT_S", "65")
+    settings = load_settings(env_file=None)
+    assert settings.report.concurrency == 2
+    assert settings.report.question_timeout_s == 12.5
+    assert settings.report.question_attempts == 3
+    assert settings.report.total_timeout_s == 65
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "REPORT_CONCURRENCY",
+        "REPORT_QUESTION_TIMEOUT_S",
+        "REPORT_QUESTION_ATTEMPTS",
+        "REPORT_TOTAL_TIMEOUT_S",
+    ],
+)
+def test_report_settings_require_positive_values(
+    name: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    set_required(monkeypatch)
+    monkeypatch.setenv(name, "0")
+    with pytest.raises(ConfigError, match=name):
         load_settings(env_file=None)

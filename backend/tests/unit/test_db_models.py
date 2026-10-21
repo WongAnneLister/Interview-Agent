@@ -73,6 +73,11 @@ def test_migrations_have_single_head() -> None:
     assert len(ScriptDirectory.from_config(config).get_heads()) == 1
 
 
+def test_report_prompt_version_fits_both_prompt_versions() -> None:
+    version = "report_question@1+report_summary@1"
+    assert getattr(TABLES["reports"].c.prompt_version.type, "length", 0) >= len(version)
+
+
 def test_usage_events_have_no_interview_or_turn_fk() -> None:
     # 只追加的账本：删除面试或发言时用量记录保留
     fks = [c for c in TABLES["usage_events"].constraints if isinstance(c, ForeignKeyConstraint)]

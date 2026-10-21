@@ -15,6 +15,14 @@
     "version": 1,
     "hash": "a463b3fc816ccb39"
   },
+  "report_question": {
+    "version": 1,
+    "hash": "67b014aaacb40839"
+  },
+  "report_summary": {
+    "version": 1,
+    "hash": "1aa6f708983c3f1b"
+  },
   "resume_parse": {
     "version": 1,
     "hash": "5f3f7ba2979eaa7c"

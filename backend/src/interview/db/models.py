@@ -302,7 +302,7 @@ class Report(UserOwned, Base):
     )
     summary_json: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     model: Mapped[str | None] = mapped_column(String(128))
-    prompt_version: Mapped[str | None] = mapped_column(String(32))
+    prompt_version: Mapped[str | None] = mapped_column(String(64))
     generated_at: Mapped[datetime | None]
     created_at: Mapped[datetime] = _created_at()
     updated_at: Mapped[datetime] = _updated_at()
