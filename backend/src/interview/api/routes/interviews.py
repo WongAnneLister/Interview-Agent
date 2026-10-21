@@ -33,6 +33,8 @@ from interview.db.models import (
     InterviewType,
     Language,
     Plan,
+    Report,
+    ReportStatus,
     UsageRole,
 )
 from interview.domain.jd import JDText, parse_jd
@@ -51,6 +53,8 @@ from interview.domain.plan import (
     generate_plan,
     main_stage_for,
 )
+from interview.domain.report import REPORT_DISCLAIMER, ReportBody
+from interview.domain.report_store import ReportRepository
 from interview.domain.resume import ResumeParsed, ResumeRepository
 from interview.prompts.structured import StructuredOutputError
 from interview.providers.observed import CallContext
@@ -93,6 +97,82 @@ class InterviewOut(BaseModel):
     created_at: datetime
     updated_at: datetime
     plan: PlanOut
+
+
+class ReportOut(BaseModel):
+    interview_id: uuid.UUID
+    status: ReportStatus
+    generated_at: datetime | None
+    model: str | None
+    prompt_version: str | None
+    report: ReportBody | None
+    error: str | None
+    disclaimer: str = REPORT_DISCLAIMER
+
+
+def _report_view(row: Report, total_timeout_s: float) -> ReportOut:
+    updated = (
+        row.updated_at.replace(tzinfo=UTC) if row.updated_at.tzinfo is None else row.updated_at
+    )
+    stale = (
+        row.status == ReportStatus.PENDING
+        and (datetime.now(UTC) - updated).total_seconds() > total_timeout_s * 2
+    )
+    status = ReportStatus.FAILED if stale else row.status
+    error = "StaleReport" if stale else (row.summary_json or {}).get("error")
+    return ReportOut(
+        interview_id=row.interview_id,
+        status=status,
+        generated_at=row.generated_at,
+        model=row.model,
+        prompt_version=row.prompt_version,
+        report=ReportBody.model_validate(row.summary_json)
+        if status == ReportStatus.READY
+        else None,
+        error=error if status == ReportStatus.FAILED and isinstance(error, str) else None,
+    )
+
+
+@router.get("/{interview_id}/report")
+async def get_report(
+    interview_id: uuid.UUID,
+    user_id: CurrentUserId,
+    session: DbSession,
+    resources: Annotated[Resources, Depends(get_resources)],
+) -> ReportOut:
+    await _owned_interview(session, user_id, interview_id)
+    row = await ReportRepository(session, user_id).get(interview_id)
+    if row is None:
+        raise NotFoundError("面试结束后才会生成报告", code="report_not_found")
+    return _report_view(row, resources.settings.report.total_timeout_s)
+
+
+@router.post("/{interview_id}/report", status_code=202)
+async def create_report(
+    interview_id: uuid.UUID,
+    user_id: CurrentUserId,
+    resources: Annotated[Resources, Depends(get_resources)],
+) -> ReportOut:
+    # 序列化本进程的检查和登记，避免同时重试时都通过“尚无报告”的检查。
+    async with resources.report_requests, resources.sessionmaker() as session:
+        interview = await _owned_interview(session, user_id, interview_id)
+        if interview.status not in {InterviewStatus.COMPLETED, InterviewStatus.ABORTED}:
+            raise ConflictError("面试结束后才可生成报告")
+        runner = resources.reports
+        if runner is None:
+            raise AppError("报告生成服务未配置", code="report_unavailable", status_code=503)
+        repository = ReportRepository(session, user_id)
+        existing = await repository.get(interview_id)
+        if runner.is_running(interview_id) or (
+            existing is not None
+            and _report_view(existing, resources.settings.report.total_timeout_s).status
+            != ReportStatus.FAILED
+        ):
+            raise ConflictError("报告已生成或正在生成")
+        row = await repository.pending(interview_id)
+        await session.commit()
+        runner.start(interview_id, user_id)
+        return _report_view(row, resources.settings.report.total_timeout_s)
 
 
 def _plan_view(plan: Plan) -> PlanOut:
