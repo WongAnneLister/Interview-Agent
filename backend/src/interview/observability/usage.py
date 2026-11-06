@@ -7,12 +7,16 @@
    Langfuse 的成本没有币种，界面显示 “$”，实际数值是人民币（metadata 标注 cost_currency=CNY）。
 3. 累加 Prometheus 计数器 interview_cost_cny_total、interview_tokens_total。
 
+background=True 时第 1 步放到后台任务里写，调用方不等数据库（见 challenges C19：写库在
+实时评估的关键路径上，数据库慢时追问会整体失效）；进程退出前调用 flush_usage() 等后台写完。
+
 cost_breakdown() 按角色、厂商汇总一场面试的成本，并给出每分钟成本（tools/cost_report.py 使用）。
 缺价格时成本记为空（见 pricing.py）；写库失败只记错误日志和计数器，不抛出，不中断面试。
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 import uuid
 from collections import defaultdict
@@ -60,13 +64,16 @@ _record_failures = counter("usage_record_failures", "用量写入数据库失败
 
 log = structlog.get_logger(__name__)
 
+FLUSH_TIMEOUT_S = 15.0
+_pending: set[asyncio.Task[bool]] = set()  # 后台写库任务；保留强引用，防止被垃圾回收
+
 
 @dataclass(frozen=True)
 class UsageResult:
     events: list[UsageEvent]  # 每个非零单位一条
     total_cost_cny: Decimal | None  # 任一单位缺价格时为空
     unpriced_units: tuple[UsageUnit, ...]
-    persisted: bool  # 是否已写入数据库
+    persisted: bool  # 是否已写入数据库；后台写入时为 False（写入结果见日志和失败计数器）
 
 
 def llm_quantities(
@@ -106,8 +113,12 @@ async def record_usage(
     span: Span | None = None,
     sessionmaker: async_sessionmaker[AsyncSession] | None = None,
     prices: PriceTable | None = None,
+    background: bool = False,
 ) -> UsageResult:
-    """记录一次厂商调用的用量。span 默认取当前 span；数量为 0 的单位不写入。"""
+    """记录一次厂商调用的用量。span 默认取当前 span；数量为 0 的单位不写入。
+
+    span 属性和 Prometheus 计数在返回前完成；background=True 时写库在后台进行，不等待。
+    """
     target = span or trace.get_current_span()
     table = prices or get_price_table()
     at = datetime.now(UTC)
@@ -160,10 +171,34 @@ async def record_usage(
         if e.unit in TOKEN_UNITS:
             _tokens_total.labels(**labels, unit=e.unit.value).inc(float(e.quantity))
 
-    persisted = not events or await _persist(
-        sessionmaker or get_sessionmaker(), user_id, role, events
-    )
+    if not events:
+        return UsageResult(events, total, tuple(unpriced), True)
+    maker = sessionmaker or get_sessionmaker()
+    if background:
+        task = asyncio.create_task(_persist(maker, user_id, role, events))
+        _pending.add(task)
+        task.add_done_callback(_pending.discard)
+        return UsageResult(events, total, tuple(unpriced), False)
+    persisted = await _persist(maker, user_id, role, events)
     return UsageResult(events, total, tuple(unpriced), persisted)
+
+
+def pending_writes() -> int:
+    return len(_pending)
+
+
+async def flush_usage(timeout_s: float = FLUSH_TIMEOUT_S) -> int:
+    """等后台写库任务完成（进程退出前、测试中调用）；返回超时后仍未写完的条数（这些会被取消）。"""
+    if not _pending:
+        return 0
+    tasks = list(_pending)
+    done, waiting = await asyncio.wait(tasks, timeout=timeout_s)
+    for task in waiting:
+        task.cancel()
+    if waiting:
+        await asyncio.gather(*waiting, return_exceptions=True)
+        log.error("usage_flush_timeout", unfinished=len(waiting), finished=len(done))
+    return len(waiting)
 
 
 def _number(value: Decimal) -> int | float:

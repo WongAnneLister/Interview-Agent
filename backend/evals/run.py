@@ -28,6 +28,7 @@ from interview.db.seed import ensure_default_user
 from interview.db.session import create_engine, make_sessionmaker
 from interview.logging import configure_logging
 from interview.observability.tracing import init_tracing, shutdown_tracing
+from interview.observability.usage import flush_usage
 from interview.prompts.loader import get_prompt_library
 from interview.providers.registry import ProviderRegistry
 
@@ -124,6 +125,7 @@ async def run(argv: list[str] | None = None) -> int:
         library = get_prompt_library()
         prompt_versions = {i: library.get(i).meta.version for i in library.ids()}
         upload = await langfuse_scores.upload(settings.langfuse, run_id, sessions, prompt_versions)
+        await flush_usage()  # 用量是后台写库的，汇总费用前要等它们写完
         try:
             cost = await run_cost(sm, user_id, since)
         except OSError as exc:

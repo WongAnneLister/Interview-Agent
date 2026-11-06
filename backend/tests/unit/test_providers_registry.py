@@ -31,6 +31,7 @@ from interview.config import (
     TTSSettings,
 )
 from interview.db.models import UsageEvent, UsageRole, UsageUnit
+from interview.observability import usage as usage_module
 from interview.observability.pricing import PriceTable
 from interview.observability.tracing import LF, Attr, init_tracing, shutdown_tracing, span
 from interview.providers.base import (
@@ -108,7 +109,9 @@ def make_registry(
     stt: FakeSTT | None = None,
     fake_tts: FakeTTS | None = None,
     llm_factory: Any = None,
+    background: bool = False,
 ) -> ProviderRegistry:
+    """默认同步写用量，调用返回后 store 里就有记录；后台写入另有专门的测试。"""
     llms = llms or {"fake": FakeLLM("你好，我是面试官")}
     front = next(iter(llms))
     settings = ProvidersSettings(
@@ -132,6 +135,7 @@ def make_registry(
         factories=factories,
         sessionmaker=cast(async_sessionmaker[AsyncSession], sessionmaker),
         prices=PriceTable(),
+        usage_in_background=background,
     )
 
 
@@ -211,6 +215,7 @@ async def test_live_eval_usage_is_recorded_under_its_slot(
     registry = ProviderRegistry(
         live_eval_settings("fake", "live-m"),
         sessionmaker=cast(async_sessionmaker[AsyncSession], lambda: RecordingSession(store)),
+        usage_in_background=False,
         prices=PriceTable(),
     )
     await registry.live_eval_llm(ctx()).complete(MESSAGES, **GEN)
@@ -468,3 +473,60 @@ async def test_warmup_is_forwarded_with_span(
     (s,) = exporter.get_finished_spans()
     assert (s.name, attrs_of(s)[Attr.AGENT_ROLE]) == ("tts.warmup", "tts")
     assert store == []
+
+
+# ---- 用量后台写库（challenges C19）----
+
+
+class SlowSession(RecordingSession):
+    """commit 要等 gate 放行，模拟很慢的数据库。"""
+
+    def __init__(self, store: list[UsageEvent], gate: asyncio.Event) -> None:
+        super().__init__(store)
+        self.gate = gate
+        self.staged: list[UsageEvent] = []
+
+    def add_all(self, objs: list[UsageEvent]) -> None:
+        self.staged.extend(objs)
+
+    async def commit(self) -> None:
+        await self.gate.wait()
+        self.store.extend(self.staged)
+
+
+def slow_registry(store: list[UsageEvent], gate: asyncio.Event) -> ProviderRegistry:
+    registry = make_registry(store, background=True)
+    registry._sessionmaker = cast(  # pyright: ignore[reportPrivateUsage]
+        async_sessionmaker[AsyncSession], lambda: SlowSession(store, gate)
+    )
+    return registry
+
+
+async def test_background_usage_does_not_wait_for_database(store: list[UsageEvent]) -> None:
+    gate = asyncio.Event()
+    registry = slow_registry(store, gate)
+    llm = registry.llm("llm_eval", ctx(usage_role=UsageRole.EVAL))
+    result = await asyncio.wait_for(llm.complete(MESSAGES, **GEN), timeout=1)
+    assert result.text == "你好，我是面试官"
+    assert store == [] and usage_module.pending_writes() == 1
+    gate.set()
+    assert await usage_module.flush_usage() == 0
+    assert {e.role for e in store} == {UsageRole.EVAL} and usage_module.pending_writes() == 0
+
+
+async def test_registry_close_flushes_pending_usage(store: list[UsageEvent]) -> None:
+    gate = asyncio.Event()
+    registry = slow_registry(store, gate)
+    await registry.llm("llm_front", ctx()).complete(MESSAGES, **GEN)
+    asyncio.get_running_loop().call_later(0.05, gate.set)
+    await registry.aclose()
+    assert store and usage_module.pending_writes() == 0
+
+
+async def test_flush_timeout_cancels_unfinished_writes(store: list[UsageEvent]) -> None:
+    registry = slow_registry(store, asyncio.Event())  # 永远不放行
+    await registry.llm("llm_front", ctx()).complete(MESSAGES, **GEN)
+    with capture_logs() as logs:
+        assert await usage_module.flush_usage(timeout_s=0.05) == 1
+    assert store == [] and usage_module.pending_writes() == 0
+    assert any(entry["event"] == "usage_flush_timeout" for entry in logs)

@@ -29,6 +29,7 @@ from interview.config import (
     TTSSettings,
     VendorSettings,
 )
+from interview.observability import usage as usage_module
 from interview.observability.pricing import PriceTable
 from interview.providers.bailian_asr import BailianASR
 from interview.providers.bailian_tts import BailianTTS
@@ -178,8 +179,10 @@ class ProviderRegistry:
         factories: ProviderFactories | None = None,
         sessionmaker: async_sessionmaker[AsyncSession] | None = None,
         prices: PriceTable | None = None,
+        usage_in_background: bool = True,
     ) -> None:
         self._settings = settings
+        self._usage_in_background = usage_in_background
         self._factories = factories or default_factories(settings)
         self._sessionmaker = sessionmaker
         self._prices = prices
@@ -214,6 +217,7 @@ class ProviderRegistry:
             is_fallback=is_fallback,
             sessionmaker=self._sessionmaker,
             prices=self._prices,
+            background=self._usage_in_background,
         )
 
     def _raw_llm(self, slot: Slot) -> LLMProvider:
@@ -246,7 +250,8 @@ class ProviderRegistry:
         return ObservedTTS(self._tts, self._observer(ctx, "tts"))
 
     async def aclose(self) -> None:
-        """关闭所有已创建的适配器（进程退出前调用）。"""
+        """等后台用量写完，再关闭所有已创建的适配器（进程退出前调用）。"""
+        await usage_module.flush_usage()
         for provider in [*self._llms.values(), self._stt, self._tts]:
             if provider is not None:
                 await provider.aclose()

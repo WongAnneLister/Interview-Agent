@@ -115,6 +115,7 @@ class Observer:
     is_fallback: bool = False
     sessionmaker: async_sessionmaker[AsyncSession] | None = None
     prices: PriceTable | None = None
+    background: bool = True  # 用量后台写库，不让数据库耗时拖慢调用（challenges C19）
 
     def named(self, provider: str, model: str) -> dict[str, Any]:
         """span() / llm_span() 的具名参数。"""
@@ -154,6 +155,7 @@ class Observer:
             span=target,
             sessionmaker=self.sessionmaker,
             prices=self.prices,
+            background=self.background,
         )
 
 

@@ -279,6 +279,7 @@ async def test_span_attributes_and_retry_usage(
         factories=ProviderFactories(llm={"fake": lambda _s: llm}),
         sessionmaker=cast(async_sessionmaker[AsyncSession], lambda: RecordingSession(store)),
         prices=PriceTable(),
+        usage_in_background=False,
     )
     eval_llm = registry.llm("llm_eval", CallContext(user_id=uuid.uuid4()))
     with span("evaluate"):
