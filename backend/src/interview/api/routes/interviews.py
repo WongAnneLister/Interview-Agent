@@ -37,9 +37,9 @@ from interview.db.models import (
     ReportStatus,
     UsageRole,
 )
-from interview.domain.jd import JDText, parse_jd
+from interview.domain.interview_setup import InterviewSettings, build_plan, persist_interview
+from interview.domain.jd import JDText
 from interview.domain.plan import (
-    InterviewPlan,
     InterviewRepository,
     PlanCompetency,
     PlanRepository,
@@ -50,7 +50,6 @@ from interview.domain.plan import (
     apply_question_edits,
     check_questions,
     context_from_plan,
-    generate_plan,
     main_stage_for,
 )
 from interview.domain.report import REPORT_DISCLAIMER, ReportBody
@@ -231,46 +230,6 @@ async def _owned_plan(session: DbSession, user_id: uuid.UUID, interview_id: uuid
     return plan
 
 
-async def _persist(
-    resources: Resources,
-    user_id: uuid.UUID,
-    interview_id: uuid.UUID,
-    body: InterviewCreate,
-    plan: InterviewPlan,
-) -> InterviewOut:
-    interview = Interview(
-        id=interview_id,
-        user_id=user_id,
-        resume_id=body.resume_id,
-        jd_text=body.jd_text,
-        type=body.type,
-        style=body.style,
-        language=body.language,
-        duration_min=body.duration_min,
-        status=InterviewStatus.PLANNED,
-    )
-    row = Plan(
-        interview_id=interview_id,
-        user_id=user_id,
-        competencies_json=[item.model_dump(mode="json") for item in plan.competencies],
-        questions_json=[item.model_dump(mode="json") for item in plan.questions],
-        tech_terms_json=list(plan.tech_terms),
-        stages_json=[item.model_dump(mode="json") for item in plan.stages],
-        prompt_version=plan.prompt_version,
-    )
-    async with resources.sessionmaker() as session:
-        InterviewRepository(session, user_id).add(interview)
-        PlanRepository(session, user_id).add(row)
-        try:
-            await session.commit()
-        except Exception:
-            await session.rollback()
-            raise
-        await session.refresh(interview)
-        await session.refresh(row)
-        return _interview_view(interview, row)
-
-
 @router.post("", status_code=201)
 async def create_interview(
     body: InterviewCreate,
@@ -298,16 +257,20 @@ async def create_interview(
         ),
         message="评估模型未配置，无法生成面试计划",
     )
+    settings = InterviewSettings(
+        resume_id=body.resume_id,
+        jd_text=body.jd_text,
+        type=body.type,
+        style=body.style,
+        language=body.language,
+        duration_min=body.duration_min,
+    )
     try:
-        jd = (await parse_jd(jd_llm, body.jd_text, interview_id=interview_id)).value
-        result = await generate_plan(
-            plan_llm,
-            jd=jd,
+        result = await build_plan(
+            jd_llm=jd_llm,
+            plan_llm=plan_llm,
             resume=resume,
-            interview_type=body.type,
-            style=body.style,
-            language=body.language,
-            duration_min=body.duration_min,
+            settings=settings,
             interview_id=interview_id,
         )
     except StructuredOutputError as exc:
@@ -317,7 +280,14 @@ async def create_interview(
             attempts=exc.attempts,
         )
         raise AppError("面试计划生成失败，请稍后重试", code="plan_failed", status_code=502) from exc
-    view = await _persist(resources, user_id, interview_id, body, result.value)
+    interview, row = await persist_interview(
+        resources.sessionmaker,
+        user_id=user_id,
+        interview_id=interview_id,
+        settings=settings,
+        plan=result.value,
+    )
+    view = _interview_view(interview, row)
     log.info(
         "interview_created",
         interview_id=str(interview_id),

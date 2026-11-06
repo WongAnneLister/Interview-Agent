@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import uuid
 from collections.abc import AsyncIterator, Generator
@@ -42,7 +43,7 @@ from interview.providers.base import (
     RateLimited,
 )
 from interview.providers.fake import FakeLLM, FakeSTT, FakeTTS
-from interview.providers.observed import ObservedLLM, marked_retry
+from interview.providers.observed import ObservedLLM, eval_mode, marked_retry
 from interview.providers.registry import (
     CallContext,
     ProviderFactories,
@@ -373,6 +374,25 @@ async def test_complete_uses_context_usage_role(
     assert (a[Attr.AGENT_ROLE], a["provider.slot"], a[Attr.IS_EVAL]) == ("report", "llm_eval", True)
     assert a[LF.OUTPUT] == "你好，我是面试官"
     assert {(e.role, e.is_eval) for e in store} == {(UsageRole.REPORT, True)}
+
+
+async def _make_ctx() -> CallContext:
+    return ctx()
+
+
+async def test_eval_mode_marks_new_contexts_as_eval(
+    store: list[UsageEvent], exporter: InMemorySpanExporter
+) -> None:
+    assert ctx().is_eval is False
+    with eval_mode():
+        inside = ctx(usage_role=UsageRole.REPORT)
+        task_ctx = await asyncio.create_task(_make_ctx())
+    assert ctx().is_eval is False
+    assert (inside.is_eval, task_ctx.is_eval) == (True, True)
+    await make_registry(store).llm("llm_eval", inside).complete(MESSAGES, **GEN)
+    (s,) = exporter.get_finished_spans()
+    assert attrs_of(s)[Attr.IS_EVAL] is True
+    assert {e.is_eval for e in store} == {True}
 
 
 async def test_nested_marked_retry_keeps_outer_flag(

@@ -17,7 +17,7 @@ import uuid
 from collections.abc import AsyncIterable, AsyncIterator, Callable, Generator, Mapping, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from types import TracebackType
 from typing import Any, Literal, Self
@@ -67,6 +67,21 @@ DEFAULT_USAGE_ROLES: Mapping[Slot, UsageRole] = {
 
 
 _is_retry: ContextVar[bool] = ContextVar("provider_call_is_retry", default=False)
+_eval_mode: ContextVar[bool] = ContextVar("provider_call_eval_mode", default=False)
+
+
+@contextmanager
+def eval_mode() -> Generator[None]:
+    """块内（及其中创建的任务里）新建的 CallContext 默认 is_eval=True，供离线评测使用。"""
+    token = _eval_mode.set(True)
+    try:
+        yield
+    finally:
+        _eval_mode.reset(token)
+
+
+def _default_is_eval() -> bool:
+    return _eval_mode.get()
 
 
 @contextmanager
@@ -87,7 +102,7 @@ class CallContext:
     interview_id: uuid.UUID | None = None
     turn_id: uuid.UUID | None = None
     usage_role: UsageRole | None = None  # 同一个 llm_eval 会用于出题、评估、报告等，按用途指定
-    is_eval: bool = False
+    is_eval: bool = field(default_factory=_default_is_eval)  # eval_mode() 块内默认为 True
 
 
 @dataclass(frozen=True)
