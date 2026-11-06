@@ -116,3 +116,13 @@ def test_unknown_cost_when_database_is_unreachable(tmp_path: Path) -> None:
     text = results.write(result, tmp_path).read_text(encoding="utf-8")
     assert "估算费用 未知" in text
     assert results.money("1.5") == "¥1.5"
+
+
+def test_long_errors_stay_on_one_table_row(tmp_path: Path) -> None:
+    error = "ProgrammingError: column | missing\n[SQL: SELECT " + "x" * 300 + "]"
+    result = run_result("2026-11-05_100000", []).model_copy(
+        update={"sessions": [session(error=error)]}
+    )
+    text = results.write(result, tmp_path).read_text(encoding="utf-8")
+    row = next(line for line in text.splitlines() if line.startswith("| backend | strong"))
+    assert "column \\| missing [SQL: SELECT" in row and row.endswith("… |")

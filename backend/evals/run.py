@@ -20,6 +20,7 @@ from evals.cost import run_cost
 from evals.data import Fixture, Persona, load_fixtures, load_personas
 from evals.data import select as pick
 from evals.metrics import SessionMetrics, aggregate, score_session
+from evals.preflight import probe
 from evals.session import EvalContext, SessionOutcome, run_session
 from evals.stability import Stability, measure
 from interview.config import Settings, load_settings
@@ -81,6 +82,13 @@ async def run(argv: list[str] | None = None) -> int:
         async with sm() as session:
             since = await session.scalar(select(func.now()))  # 用数据库时间，避免时区和时钟差
         assert since is not None  # noqa: S101
+        print("探测各模型（关闭主备切换）…", flush=True)
+        problems = await probe(settings.providers, user_id, sm)
+        if problems:
+            print("以下模型连不上，评测会悄悄跑在备用模型上，已停止：")
+            for item in problems:
+                print(f"  ❌ {item}")
+            return 1
         ec = EvalContext(sm, providers, user_id, settings.report)
         semaphore = asyncio.Semaphore(args.concurrency)
 

@@ -76,6 +76,12 @@ def compare(current: list[Metric], before: RunResult | None) -> dict[str, str]:
     return notes
 
 
+def _cell(text: str, limit: int = 120) -> str:
+    """表格单元格：压成一行、转义竖线并截断（完整错误在 .json 里）。"""
+    flat = " ".join(text.split()).replace("|", "\\|")
+    return flat if len(flat) <= limit else flat[: limit - 1] + "…"
+
+
 def _fmt(value: float | None) -> str:
     return "-" if value is None else f"{value:g}"
 
@@ -118,7 +124,7 @@ def render(result: RunResult, before: RunResult | None) -> str:
         "|---|---|---|---|---|---|---|---|---|---|---|",
     ]
     for s in result.sessions:
-        remark = s.error or ("达到轮数上限" if s.hit_turn_cap else "")
+        remark = _cell(s.error) if s.error else ("达到轮数上限" if s.hit_turn_cap else "")
         out.append(
             f"| {s.fixture} | {s.persona} | {_fmt(s.overall_score)} | "
             f"{status[s.in_expected_range]} | {s.candidate_turns} | {s.clock_ms / 60000:.1f} 分 | "
