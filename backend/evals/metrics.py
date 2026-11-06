@@ -12,6 +12,7 @@ from evals.data import Persona
 from evals.session import EVAL_DURATION_MIN, EvalContext, SessionOutcome
 from evals.stability import Stability
 from interview.db.models import UsageRole
+from interview.domain.orchestrator_events import DEFAULT_CONFIG
 from interview.observability.tracing import span
 from interview.providers.observed import eval_mode
 
@@ -33,6 +34,8 @@ class SessionMetrics(BaseModel):
     hit_turn_cap: bool = False
     follow_ups: int = 0
     follow_ups_ok: int = 0
+    missed_follow_ups: int = 0  # 实时评估想追问、但因超时已换题
+    live_latencies: list[int] = []  # 实时评估耗时（毫秒）
     questions: int = 0
     questions_relevant: int = 0
     evidence_quotes: int = 0
@@ -73,6 +76,8 @@ async def score_session(
     m.duration_dev = round(abs(drive.clock_ms - target_ms) / target_ms, 3)
     m.evidence_quotes, m.evidence_verified = collect.evidence_check(data)
     m.raw_evidence, m.raw_dropped = collect.raw_evidence(data)
+    m.missed_follow_ups = collect.missed_follow_ups(data)
+    m.live_latencies = collect.live_latencies(data)
     if persona.id == "verbose":
         m.asked_to_summarize = collect.asked_to_summarize(data)
 
@@ -171,6 +176,9 @@ def aggregate(sessions: Sequence[SessionMetrics], stability: Stability | None) -
     follow = _ratio(total("follow_ups_ok"), total("follow_ups"))
     relevant = _ratio(total("questions_relevant"), total("questions"))
     devs = [s.duration_dev for s in ok if s.duration_dev is not None]
+    latencies = sorted(ms for s in ok for ms in s.live_latencies)
+    wait_ms = int(DEFAULT_CONFIG.eval_wait_s * 1000)
+    on_time = _ratio(sum(ms <= wait_ms for ms in latencies), len(latencies))
     metrics += [
         Metric(
             key="evidence",
@@ -196,6 +204,17 @@ def aggregate(sessions: Sequence[SessionMetrics], stability: Stability | None) -
             target="≥ 80%",
             passed=follow >= 0.8 if follow is not None else None,
             detail=f"{total('follow_ups_ok')}/{total('follow_ups')} 条",
+        ),
+        Metric(
+            key="live_eval_on_time",
+            name=f"实时评估在 {wait_ms / 1000:g} 秒内返回的比例（超时就不追问，按计划换题）",
+            value=on_time,
+            target="≥ 95%",
+            passed=on_time >= 0.95 if on_time is not None else None,
+            detail=f"中位数 {statistics.median(latencies) / 1000:.1f} 秒，最慢 "
+            f"{latencies[-1] / 1000:.1f} 秒；想追问但已换题 {total('missed_follow_ups')} 次"
+            if latencies
+            else "",
         ),
         Metric(
             key="relevance",

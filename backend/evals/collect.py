@@ -45,7 +45,10 @@ class SessionData:
     plan: InterviewPlan
     jd_text: str
     turns: list[TurnView]
-    follow_up_after: set[uuid.UUID]  # 实时评估决定追问的候选人发言
+    # 候选人发言 → 实时评估的结论和耗时（毫秒）。超过等待上限的结果编排器没用上，但照样落库
+    live_evals: dict[uuid.UUID, tuple[NextAction | None, int | None]] = field(
+        default_factory=dict[uuid.UUID, tuple[NextAction | None, int | None]]
+    )
     final_evals: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
     report: ReportBody | None = None
 
@@ -76,12 +79,10 @@ async def load_session(
             plan=plan_from_row(plan_row),
             jd_text=interview.jd_text,
             turns=[TurnView(t.id, t.role, t.text, t.question_id) for t in turns],
-            follow_up_after={
-                e.turn_id
+            live_evals={
+                e.turn_id: (e.next_action, _int(e.detail_json.get("latency_ms")))
                 for e in evals
-                if e.phase is EvaluationPhase.LIVE
-                and e.next_action is NextAction.FOLLOW_UP
-                and e.turn_id is not None
+                if e.phase is EvaluationPhase.LIVE and e.turn_id is not None
             },
             final_evals=[
                 {"evidence": len(e.evidence_json), **e.detail_json}
@@ -94,6 +95,10 @@ async def load_session(
         )
 
 
+def _int(value: object) -> int | None:
+    return int(value) if isinstance(value, int | float | str) and str(value).isdigit() else None
+
+
 @dataclass(frozen=True)
 class FollowUp:
     id: int
@@ -104,15 +109,18 @@ class FollowUp:
 
 
 def follow_ups(data: SessionData) -> list[FollowUp]:
-    """实时评估决定追问后，面试官紧接着说的那句话就是追问。"""
+    """候选人答完后，面试官仍停在同一道题上说的话就是追问。
+
+    不能按实时评估的结论判断：评估超过等待上限时编排器已按计划换题，晚到的“追问”结论照样落库。
+    """
     questions = {q.id: q for q in data.plan.questions}
     items: list[FollowUp] = []
     for previous, turn in zip(data.turns, data.turns[1:], strict=False):
         if (
             previous.role is TurnRole.CANDIDATE
-            and previous.id in data.follow_up_after
             and turn.role is TurnRole.INTERVIEWER
             and previous.question_id in questions
+            and turn.question_id == previous.question_id
         ):
             question = questions[previous.question_id]
             items.append(
@@ -142,6 +150,25 @@ def raw_evidence(data: SessionData) -> tuple[int, int]:
     kept = sum(int(e.get("evidence", 0)) for e in data.final_evals)
     dropped = sum(int(e.get("evidence_dropped", 0)) for e in data.final_evals)
     return kept + dropped, dropped
+
+
+def missed_follow_ups(data: SessionData) -> int:
+    """实时评估想追问、但面试官已经换题的次数（评估太慢被降级的直接后果）。"""
+    missed = 0
+    for previous, turn in zip(data.turns, data.turns[1:], strict=False):
+        action, _ = data.live_evals.get(previous.id, (None, None))
+        if (
+            previous.role is TurnRole.CANDIDATE
+            and action is NextAction.FOLLOW_UP
+            and turn.role is TurnRole.INTERVIEWER
+            and turn.question_id != previous.question_id
+        ):
+            missed += 1
+    return missed
+
+
+def live_latencies(data: SessionData) -> list[int]:
+    return sorted(ms for _, ms in data.live_evals.values() if ms is not None)
 
 
 def asked_to_summarize(data: SessionData) -> bool:

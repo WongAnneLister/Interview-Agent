@@ -25,7 +25,16 @@ def by_key(items: list[Metric]) -> dict[str, Metric]:
 
 def test_aggregate_targets() -> None:
     sessions = [
-        metrics("a", "strong", 4.5, follow_ups=5, follow_ups_ok=4, duration_dev=0.1),
+        metrics(
+            "a",
+            "strong",
+            4.5,
+            follow_ups=5,
+            follow_ups_ok=4,
+            duration_dev=0.1,
+            live_latencies=[800, 1200, 2400, 9000],
+            missed_follow_ups=1,
+        ),
         metrics(
             "a",
             "weak",
@@ -48,6 +57,11 @@ def test_aggregate_targets() -> None:
     assert m["stability_question"].passed and m["stability_overall"].passed
     assert (m["follow_up"].value, m["follow_up"].passed) == (0.8, True)
     assert (m["relevance"].value, m["relevance"].passed) == (0.9, True)
+    assert (m["live_eval_on_time"].value, m["live_eval_on_time"].passed) == (0.75, False)
+    assert (
+        "最慢 9.0 秒" in m["live_eval_on_time"].detail
+        and "已换题 1 次" in m["live_eval_on_time"].detail
+    )
     assert (m["evidence"].value, m["evidence"].passed) == (1.0, True)
     assert (m["duration"].value, m["duration"].passed) == (0.2, False)
     assert (m["leaks"].value, m["leaks"].passed) == (0.0, True)

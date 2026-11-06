@@ -7,6 +7,8 @@ import uuid
 from collections.abc import AsyncGenerator
 from typing import Any, cast
 
+import pytest
+
 from evals.candidate import SimulatedCandidate
 from evals.data import load_personas
 from evals.driver import MAX_CANDIDATE_TURNS, TURN_LATENCY_MS, Driver, speech_ms
@@ -121,3 +123,16 @@ async def test_candidate_prompt_contains_persona_resume_and_history() -> None:
     assert "张三 后端工程师" in user
     assert "面试官：介绍一下你的项目" in user and "候选人：我在拾光电商做订单中心。" in user
     assert "具体怎么做的？" in user
+
+
+def test_describe_points_at_project_frame() -> None:
+    from evals.session import describe
+
+    def inner() -> None:
+        raise TimeoutError
+
+    with pytest.raises(TimeoutError) as info:
+        inner()
+    text = describe(info.value)
+    assert text.startswith("TimeoutError @ test_evals_driver.py:")
+    assert text.endswith(" inner")

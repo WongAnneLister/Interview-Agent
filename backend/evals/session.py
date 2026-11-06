@@ -8,8 +8,10 @@ from __future__ import annotations
 import asyncio
 import random
 import time
+import traceback
 import uuid
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -95,16 +97,26 @@ async def run_session(ec: EvalContext, fixture: Fixture, persona: Persona) -> Se
         try:
             outcome.drive = await _run(ec, fixture, persona, interview_id)
         except Exception as exc:
-            outcome.error = f"{type(exc).__name__}: {exc}"
+            outcome.error = describe(exc)
             log.warning(
                 "eval_session_failed",
                 interview_id=str(interview_id),
                 fixture=fixture.id,
                 persona=persona.id,
                 error=type(exc).__name__,
+                exc_info=True,
             )
     outcome.duration_s = round(time.perf_counter() - started, 1)
     return outcome
+
+
+def describe(exc: BaseException) -> str:
+    """错误类型、信息和抛出位置（项目代码里最近的一帧）；TimeoutError 之类没有信息时靠位置定位。"""
+    frames = traceback.extract_tb(exc.__traceback__)
+    ours = [f for f in frames if "/site-packages/" not in f.filename] or frames
+    where = f" @ {Path(ours[-1].filename).name}:{ours[-1].lineno} {ours[-1].name}" if ours else ""
+    message = str(exc).strip()
+    return f"{type(exc).__name__}{': ' + message if message else ''}{where}"
 
 
 async def _run(
