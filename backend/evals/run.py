@@ -73,7 +73,11 @@ async def run(argv: list[str] | None = None) -> int:
     started = time.perf_counter()
     run_id = datetime.now().strftime("%Y-%m-%d_%H%M%S")
     try:
-        user_id = await ensure_default_user(engine, EVAL_EMAIL)
+        try:
+            user_id = await ensure_default_user(engine, EVAL_EMAIL)
+        except OSError as exc:
+            print(f"连不上数据库（{type(exc).__name__}）：先在另一个终端运行 make tunnel，再重试。")
+            return 1
         async with sm() as session:
             since = await session.scalar(select(func.now()))  # 用数据库时间，避免时区和时钟差
         assert since is not None  # noqa: S101
