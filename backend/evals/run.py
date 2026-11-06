@@ -88,7 +88,11 @@ async def run(argv: list[str] | None = None) -> int:
             async with semaphore:
                 print(f"开始 {fixture.id}/{persona.id}", flush=True)
                 outcome: SessionOutcome = await run_session(ec, fixture, persona)
-                metrics = await score_session(ec, outcome, persona)
+                try:
+                    metrics = await score_session(ec, outcome, persona)
+                except Exception as exc:  # 打分阶段出错（如隧道断开）只记在这一场，不中断整次评测
+                    outcome.error = outcome.error or f"打分失败 {type(exc).__name__}: {exc}"
+                    metrics = await score_session(ec, outcome, persona)  # 有错误时不再读库
                 print(
                     f"完成 {fixture.id}/{persona.id}：总分 {metrics.overall_score}"
                     f"{'，出错 ' + metrics.error if metrics.error else ''}",
@@ -105,11 +109,18 @@ async def run(argv: list[str] | None = None) -> int:
         base = next((s for s in sessions if s.persona == "average" and s.error is None), None)
         if base is not None and args.repeats > 0:
             print(f"稳定性：{base.fixture}/average 重复评分 {args.repeats} 次", flush=True)
-            stability = await measure(ec, uuid.UUID(base.interview_id), args.repeats)
+            try:
+                stability = await measure(ec, uuid.UUID(base.interview_id), args.repeats)
+            except Exception as exc:
+                print(f"稳定性重跑失败（{type(exc).__name__}），跳过", flush=True)
         library = get_prompt_library()
         prompt_versions = {i: library.get(i).meta.version for i in library.ids()}
         upload = await langfuse_scores.upload(settings.langfuse, run_id, sessions, prompt_versions)
-        cost = await run_cost(sm, user_id, since)
+        try:
+            cost = await run_cost(sm, user_id, since)
+        except OSError as exc:
+            print(f"汇总费用时连不上数据库（{type(exc).__name__}），费用记为未知", flush=True)
+            cost = None
         result = results.RunResult(
             run_id=run_id,
             mode="quick" if args.quick else "full",
@@ -129,7 +140,9 @@ async def run(argv: list[str] | None = None) -> int:
         await engine.dispose()
         shutdown_tracing()
     failed = [m for m in result.metrics if m.passed is False]
-    print(f"\n结果：{path}\n估算费用：¥{result.cost_cny}；未达标指标 {len(failed)} 项")
+    print(
+        f"\n结果：{path}\n估算费用：{results.money(result.cost_cny)}；未达标指标 {len(failed)} 项"
+    )
     for m in failed:
         print(f"  ❌ {m.name}：{m.value}（目标 {m.target}）")
     return 0

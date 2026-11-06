@@ -33,7 +33,17 @@ class RunResult(BaseModel):
     langfuse: str = ""
 
 
-def cost_fields(cost: CostBreakdown) -> dict[str, Any]:
+UNKNOWN_COST = "未知"
+
+
+def money(cost_cny: str) -> str:
+    return cost_cny if cost_cny == UNKNOWN_COST else f"¥{cost_cny}"
+
+
+def cost_fields(cost: CostBreakdown | None) -> dict[str, Any]:
+    """cost 为空表示汇总时连不上数据库。"""
+    if cost is None:
+        return {"cost_cny": UNKNOWN_COST, "cost_by_role": {}, "unpriced_events": 0}
     return {
         "cost_cny": f"{cost.total_cny:.4f}",
         "cost_by_role": {k: f"{v:.4f}" for k, v in cost.by_role.items()},
@@ -79,7 +89,7 @@ def render(result: RunResult, before: RunResult | None) -> str:
         f"- 模式：{result.mode}；人设：{', '.join(result.personas)}；"
         f"材料：{', '.join(result.fixtures)}",
         f"- 场次：{len(result.sessions)}；耗时 {result.wall_s:.0f} 秒；"
-        f"估算费用 ¥{result.cost_cny}"
+        f"估算费用 {money(result.cost_cny)}"
         + (
             f"（{result.unpriced_events} 条用量缺价格，费用偏低）" if result.unpriced_events else ""
         ),

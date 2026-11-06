@@ -107,3 +107,12 @@ async def test_upload_skips_when_not_configured() -> None:
     assert await langfuse_scores.upload(settings, "run", [session()], {}) == (
         "Langfuse 未配置，未上传分数"
     )
+
+
+def test_unknown_cost_when_database_is_unreachable(tmp_path: Path) -> None:
+    fields = results.cost_fields(None)
+    assert fields["cost_cny"] == results.UNKNOWN_COST
+    result = run_result("2026-11-04_100000", []).model_copy(update=fields)
+    text = results.write(result, tmp_path).read_text(encoding="utf-8")
+    assert "估算费用 未知" in text
+    assert results.money("1.5") == "¥1.5"
