@@ -134,6 +134,16 @@ backend/tools/benchmark/data/
 - 有术语表时会临时创建热词表、对比“无热词 / 有热词”，跑完自动删除（每个账号最多 10 个热词表）。
 - 合成的 20 句音频保存在 `backend/tools/benchmark/out/`（不提交），可以人工试听。
 
+## 模拟候选人评测
+
+`make eval-quick` 让大模型扮演 6 种候选人（优秀、一般、较弱、紧张卡顿、冗长、对抗），在 backend 材料上各跑一场 15 分钟的文字面试并生成报告；`make eval` 跑全部 5 份材料（30 场）。
+需要隧道和 `.env` 里的厂商配置，**会真实调用大模型并产生费用**，CI 不跑。评测数据记在单独的用户 `eval@localhost` 名下，用量带 `is_eval` 标记。
+
+- 指标：区分度、稳定性（同一转写重复评分 5 次）、证据可信、追问合理性和题目相关性（大模型裁判）、时长偏差、对抗是否泄露或被操纵。目标值见 PRD 的评测方案。
+- 结果写入 `backend/evals/results/<时间>.md` 和 `.json`，并与上一次对比，退化的指标标 ⚠；末尾列出裁判判为不合格的条目，便于人工抽检。
+- 只跑部分：`make eval args="--personas strong,weak --fixtures backend,ai_app"`；跳过稳定性重跑：`args="--repeats 0"`。
+- Langfuse 已配置时，每场的分数会写到这场面试的 trace 上，并附提示词版本。
+
 ## 配置
 
 复制 `.env.example` 为 `.env` 后按注释填写。`.env` 包含密钥，不能提交（pre-commit 会拦截）。

@@ -5,7 +5,7 @@
 BACKEND := backend
 UV := uv run --directory $(BACKEND)
 
-.PHONY: help install fmt lint typecheck test check test-live hooks api obs-smoke migrate migration seed test-db cost hotwords benchmark recordings prompts-lock \
+.PHONY: help install fmt lint typecheck test check test-live hooks api obs-smoke migrate migration seed test-db cost hotwords benchmark recordings prompts-lock eval eval-quick \
 	vps-deploy vps-env vps-ps vps-logs obs-up obs-down tunnel check-env fetch-livekit livekit
 
 help:
@@ -26,6 +26,8 @@ help:
 	@echo "benchmark  厂商实测（识别、合成、大模型），报告写入 docs/benchmarks/（会产生少量费用）"
 	@echo "recordings 把实测原始录音（data/raw/）转成 16 kHz 单声道 wav（data/asr/），已有的跳过"
 	@echo "prompts-lock 改完提示词并把 version 加一后，更新 prompts/versions.lock（与提示词一起提交）"
+	@echo "eval       模拟候选人文字层评测（6 人设 × 5 材料，要花钱），结果写入 backend/evals/results/"
+	@echo "eval-quick 每个人设 1 场的快速评测（同一份材料）"
 	@echo "obs-smoke  发送一条示例链路到 Langfuse 并暴露示例指标（需要隧道和 obs-up）"
 	@echo "vps-deploy 部署 / 更新 VPS 上的开发依赖（可重复执行）"
 	@echo "obs-up     启动可观测性服务（本机 Langfuse + VPS 上的 Prometheus、Grafana）"
@@ -97,6 +99,14 @@ benchmark:
 
 prompts-lock:
 	$(UV) python -m interview.prompts.lock
+
+# 文字层模拟候选人评测，要花钱，CI 不跑。args 透传，如 make eval args="--personas strong,weak"
+eval:
+	$(UV) python -m evals.run $(args)
+
+# 每个人设 1 场，都用 backend 材料
+eval-quick:
+	$(UV) python -m evals.run --quick $(args)
 
 recordings:
 	bash scripts/convert-recordings.sh
