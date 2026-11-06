@@ -87,7 +87,10 @@ class _Progress:
     degraded: int = 0
 
 
-def _competencies(plan: InterviewPlan, questions: list[QuestionReview]) -> list[CompetencyReview]:
+def competency_reviews(
+    plan: InterviewPlan, questions: list[QuestionReview]
+) -> list[CompetencyReview]:
+    """按能力项汇总各题得分（离线评测的稳定性重跑也用它）。"""
     result: list[CompetencyReview] = []
     for competency in plan.competencies:
         items = [q for q in questions if q.competency == competency.name and q.score is not None]
@@ -105,6 +108,13 @@ def _competencies(plan: InterviewPlan, questions: list[QuestionReview]) -> list[
             )
         )
     return result
+
+
+def overall_score(competencies: list[CompetencyReview]) -> float | None:
+    """已考察能力项按权重加权平均；都未考察到时为空。"""
+    scored = [c for c in competencies if c.score is not None]
+    weight = sum(c.weight for c in scored)
+    return round(sum((c.score or 0) * c.weight for c in scored) / weight, 1) if weight else None
 
 
 async def _generate(
@@ -199,12 +209,7 @@ async def _generate(
         else QuestionReview(question_id=q.id, question=q.text, competency=q.competency, asked=False)
         for q, result in zip(plan.questions, reviews, strict=True)
     ]
-    competencies = _competencies(plan, questions)
-    scored = [c for c in competencies if c.score is not None]
-    weight = sum(c.weight for c in scored)
-    overall_score = (
-        round(sum((c.score or 0) * c.weight for c in scored) / weight, 1) if weight else None
-    )
+    competencies = competency_reviews(plan, questions)
     overall = "报告汇总暂不可用，请参考各题反馈并优先练习缺失要点。"
     improvements = [
         q.missing_points[0]
@@ -264,7 +269,7 @@ async def _generate(
         degraded.append("汇总失败，使用各题反馈")
         progress.degraded = len(degraded)
     body = ReportBody(
-        overall_score=overall_score,
+        overall_score=overall_score(competencies),
         overall=overall,
         top_improvements=improvements,
         competencies=competencies,
