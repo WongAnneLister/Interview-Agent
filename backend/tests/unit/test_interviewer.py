@@ -262,15 +262,15 @@ def test_transition_groups_have_enough_short_sentences(
 @pytest.mark.parametrize("language", list(Language))
 @pytest.mark.parametrize("style", list(InterviewStyle))
 def test_transition_picker_avoids_recent(language: Language, style: InterviewStyle) -> None:
-    picker = TransitionPicker(language, style, rng=random.Random(7))  # noqa: S311
+    picker = TransitionPicker(language, style, rng=random.Random(7))
     picked = [picker.pick() for _ in range(200)]
     for index in range(len(picked) - 2):
         assert len(set(picked[index : index + 3])) == 3
 
 
 def test_transition_picker_is_deterministic_with_seed() -> None:
-    first = TransitionPicker(Language.ZH, InterviewStyle.GENTLE, rng=random.Random(42))  # noqa: S311
-    second = TransitionPicker(Language.ZH, InterviewStyle.GENTLE, rng=random.Random(42))  # noqa: S311
+    first = TransitionPicker(Language.ZH, InterviewStyle.GENTLE, rng=random.Random(42))
+    second = TransitionPicker(Language.ZH, InterviewStyle.GENTLE, rng=random.Random(42))
     assert [first.pick() for _ in range(20)] == [second.pick() for _ in range(20)]
 
 

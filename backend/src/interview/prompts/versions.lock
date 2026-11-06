@@ -1,4 +1,8 @@
 {
+  "eval_candidate": {
+    "version": 1,
+    "hash": "065bb211ad54790b"
+  },
   "evaluate_answer": {
     "version": 1,
     "hash": "906c99fff1a59216"
