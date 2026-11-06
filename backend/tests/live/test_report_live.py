@@ -246,7 +246,8 @@ async def test_report_fixed_interview(
                 )
             )
         with capsys.disabled():
-            print(f"\n[report] {settings.llm_eval.provider}/{settings.llm_eval.model}")
+            role = settings.llm_report if settings.llm_report.configured else settings.llm_eval
+            print(f"\n[report] {role.provider}/{role.model} {role.extra_body}")
             for evaluation in evaluations:
                 print(
                     f"  {evaluation.question_id}: {evaluation.detail_json['latency_ms']} ms, "

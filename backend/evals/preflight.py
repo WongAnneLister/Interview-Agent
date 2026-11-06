@@ -29,9 +29,12 @@ async def probe(
         update={"llm_fallback": LLMFallbackSettings.model_construct()}
     )
     registry = ProviderRegistry(primary_only, sessionmaker=sessionmaker)
-    slots: list[LLMSlot] = ["llm_front", "llm_eval"]
-    if settings.llm_live_eval.configured:
-        slots.append("llm_live_eval")
+    optional: list[LLMSlot] = ["llm_live_eval", "llm_report"]
+    slots: list[LLMSlot] = [
+        "llm_front",
+        "llm_eval",
+        *(slot for slot in optional if getattr(settings, slot).configured),
+    ]
 
     async def one(slot: LLMSlot) -> str | None:
         role = getattr(settings, slot)

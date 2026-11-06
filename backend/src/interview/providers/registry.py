@@ -1,7 +1,8 @@
-"""按配置里的角色（llm_front、llm_eval、llm_live_eval、stt、tts）创建厂商实例。
+"""按配置里的角色（llm_front、llm_eval、llm_live_eval、llm_report、stt、tts）创建厂商实例。
 
-- llm_eval 用于简历、JD、出题和报告（重质量）；llm_live_eval 用于面试中的实时评估（要快）。
-  没有配置 llm_live_eval 时，live_eval_llm() 回退到 llm_eval。
+- llm_eval 用于简历、JD、出题（重质量、可以慢）；llm_live_eval 用于面试中的实时评估（要快）；
+  llm_report 用于面试后的报告（60 秒内出结果）。
+  没有配置 llm_live_eval / llm_report 时，live_eval_llm() / report_llm() 回退到 llm_eval。
 
 - 每个角色的 PROVIDER 名字通过工厂表找到实现：fake、bailian、deepseek
   （识别、合成：fake、bailian；合成另有 bailian_realtime，即 Qwen-TTS Realtime）。
@@ -64,7 +65,7 @@ __all__ = [
     "default_factories",
 ]
 
-LLMSlot = Literal["llm_front", "llm_eval", "llm_live_eval"]
+LLMSlot = Literal["llm_front", "llm_eval", "llm_live_eval", "llm_report"]
 
 log = structlog.get_logger(__name__)
 
@@ -237,6 +238,11 @@ class ProviderRegistry:
     def live_eval_llm(self, ctx: CallContext) -> LLMProvider:
         """实时评估用的模型：配置了 LLM_LIVE_EVAL_* 就用它，否则回退到 llm_eval。"""
         slot: LLMSlot = "llm_live_eval" if self._settings.llm_live_eval.configured else "llm_eval"
+        return self.llm(slot, ctx)
+
+    def report_llm(self, ctx: CallContext) -> LLMProvider:
+        """报告评分用的模型：配置了 LLM_REPORT_* 就用它，否则回退到 llm_eval。"""
+        slot: LLMSlot = "llm_report" if self._settings.llm_report.configured else "llm_eval"
         return self.llm(slot, ctx)
 
     def stt(self, ctx: CallContext) -> STTProvider:

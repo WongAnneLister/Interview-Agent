@@ -54,13 +54,14 @@ from interview.providers.base import (
     TTSUsage,
 )
 
-Slot = Literal["llm_front", "llm_eval", "llm_live_eval", "llm_fallback", "stt", "tts"]
+Slot = Literal["llm_front", "llm_eval", "llm_live_eval", "llm_report", "llm_fallback", "stt", "tts"]
 
 # 调用方没有指定 usage_role 时，按 slot 推断
 DEFAULT_USAGE_ROLES: Mapping[Slot, UsageRole] = {
     "llm_front": UsageRole.FRONT,
     "llm_eval": UsageRole.EVAL,
     "llm_live_eval": UsageRole.EVAL,
+    "llm_report": UsageRole.REPORT,
     "stt": UsageRole.ASR,
     "tts": UsageRole.TTS,
 }

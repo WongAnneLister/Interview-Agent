@@ -53,7 +53,7 @@ async def measure(ec: EvalContext, interview_id: uuid.UUID, repeats: int = REPEA
         async def one(round_no: int) -> list[QuestionReview]:
             async def review(question_id: str) -> QuestionReview:
                 question = next(q for q in asked if q.id == question_id)
-                llm = ec.providers.llm("llm_eval", ec.ctx(UsageRole.REPORT, interview_id))
+                llm = ec.providers.report_llm(ec.ctx(UsageRole.REPORT, interview_id))
                 async with semaphore:
                     try:
                         reviewed = await review_question(

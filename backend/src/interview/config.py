@@ -129,6 +129,12 @@ class LLMLiveEvalSettings(ProviderRoleSettings):
     model_config = _config("LLM_LIVE_EVAL_")
 
 
+class LLMReportSettings(ProviderRoleSettings):
+    """面试后的报告评分与汇总。PRD R1 要求 60 秒内出报告，开思考的 max 要 74–82 秒（C20）。"""
+
+    model_config = _config("LLM_REPORT_")
+
+
 class LLMFallbackSettings(ProviderRoleSettings):
     model_config = _config("LLM_FALLBACK_")
 
@@ -220,6 +226,9 @@ class ProvidersSettings(BaseModel):
     llm_live_eval: LLMLiveEvalSettings = Field(
         default_factory=lambda: LLMLiveEvalSettings.model_construct()
     )
+    llm_report: LLMReportSettings = Field(
+        default_factory=lambda: LLMReportSettings.model_construct()
+    )
     bailian: BailianSettings = Field(default_factory=lambda: BailianSettings.model_construct())
     deepseek: DeepSeekSettings = Field(default_factory=lambda: DeepSeekSettings.model_construct())
 
@@ -261,6 +270,7 @@ def load_settings(env_file: Path | None = DEFAULT_ENV_FILE) -> Settings:
     llm_front = _load(LLMFrontSettings, env_file, errors)
     llm_eval = _load(LLMEvalSettings, env_file, errors)
     llm_live_eval = _load(LLMLiveEvalSettings, env_file, errors)
+    llm_report = _load(LLMReportSettings, env_file, errors)
     llm_fallback = _load(LLMFallbackSettings, env_file, errors)
     stt = _load(STTSettings, env_file, errors)
     tts = _load(TTSSettings, env_file, errors)
@@ -288,6 +298,7 @@ def load_settings(env_file: Path | None = DEFAULT_ENV_FILE) -> Settings:
             llm_front=llm_front,
             llm_eval=llm_eval,
             llm_live_eval=llm_live_eval,
+            llm_report=llm_report,
             llm_fallback=llm_fallback,
             stt=stt,
             tts=tts,

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import time
 import uuid
 from datetime import datetime
@@ -54,8 +55,17 @@ def _split(value: str | None) -> list[str] | None:
 
 def _models(settings: Settings) -> dict[str, str]:
     p = settings.providers
-    roles = {"front": p.llm_front, "eval": p.llm_eval, "live_eval": p.llm_live_eval}
-    return {k: f"{v.provider}/{v.model}" for k, v in roles.items() if v.configured}
+    roles = {
+        "front": p.llm_front,
+        "eval": p.llm_eval,
+        "live_eval": p.llm_live_eval,
+        "report": p.llm_report,
+    }
+    return {
+        k: f"{v.provider}/{v.model}" + (f" {json.dumps(v.extra_body)}" if v.extra_body else "")
+        for k, v in roles.items()
+        if v.configured
+    }
 
 
 async def run(argv: list[str] | None = None) -> int:

@@ -117,6 +117,11 @@ def overall_score(competencies: list[CompetencyReview]) -> float | None:
     return round(sum((c.score or 0) * c.weight for c in scored) / weight, 1) if weight else None
 
 
+def questions_deadline_s(settings: ReportSettings) -> float:
+    """逐题评分的截止时间：总时限减去留给汇总的一次调用时限，至少留一半总时限给逐题。"""
+    return max(settings.total_timeout_s - settings.question_timeout_s, settings.total_timeout_s / 2)
+
+
 async def _generate(
     store: ReportStore,
     providers: ProviderRegistry,
@@ -143,8 +148,7 @@ async def _generate(
             return None
         async with semaphore:
             llm = _CountedLLM(
-                providers.llm(
-                    "llm_eval",
+                providers.report_llm(
                     CallContext(
                         user_id=store.user_id,
                         interview_id=store.interview_id,
@@ -193,12 +197,38 @@ async def _generate(
 
     tasks = [asyncio.create_task(review(question)) for question in plan.questions]
     try:
-        reviews = await asyncio.gather(*tasks)
+        # 逐题评分有截止时间，留出汇总的时间；超时的题标为降级，已评完的照样进报告
+        done, _ = await asyncio.wait(tasks, timeout=questions_deadline_s(settings))
     finally:
         for task in tasks:
             if not task.done():
                 task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
+    reviews: list[QuestionReviewResult | None] = []
+    for question, task in zip(plan.questions, tasks, strict=True):
+        if task in done:
+            reviews.append(task.result())
+        elif any(t.role == TurnRole.CANDIDATE for t in turns.get(question.id, [])):
+            failures.append(TimeoutError(f"{question.id} 评分超时"))
+            degraded.append(f"{question.id}: 评分超时")
+            progress.degraded = len(degraded)
+            reviews.append(
+                QuestionReviewResult(
+                    question_id=question.id,
+                    question=question.text,
+                    competency=question.competency,
+                    asked=True,
+                    provider="",
+                    model="",
+                    prompt_version=f"report_question@{question_version}",
+                    latency_ms=int(questions_deadline_s(settings) * 1000),
+                    retries=0,
+                    evidence_dropped=0,
+                    evidence_retried=False,
+                )
+            )
+        else:
+            reviews.append(None)
     results = [r for r in reviews if r is not None]
     await store.evaluations(results, turns)
     if results and len(failures) == len(results):
@@ -243,8 +273,7 @@ async def _generate(
         ),
     )
     try:
-        llm = providers.llm(
-            "llm_eval",
+        llm = providers.report_llm(
             CallContext(
                 user_id=store.user_id,
                 interview_id=store.interview_id,

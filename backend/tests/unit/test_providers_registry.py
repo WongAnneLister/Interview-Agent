@@ -24,6 +24,7 @@ from interview.config import (
     LLMFallbackSettings,
     LLMFrontSettings,
     LLMLiveEvalSettings,
+    LLMReportSettings,
     ObservabilitySettings,
     ProviderRoleSettings,
     ProvidersSettings,
@@ -366,6 +367,16 @@ async def test_llm_stream_span_and_usage(
             "fake-llm",
             False,
         )
+
+
+def test_report_llm_uses_report_role_or_falls_back_to_eval() -> None:
+    settings = make_registry([])._settings  # pyright: ignore[reportPrivateUsage]
+    assert ProviderRegistry(settings).report_llm(ctx()).model == "eval-m"
+    configured = settings.model_copy(
+        update={"llm_report": role(LLMReportSettings, "fake", "report-m")}
+    )
+    llm = ProviderRegistry(configured).report_llm(ctx())
+    assert llm.model == "report-m"
 
 
 async def test_complete_uses_context_usage_role(

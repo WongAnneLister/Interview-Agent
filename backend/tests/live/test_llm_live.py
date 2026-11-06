@@ -18,6 +18,7 @@ from interview.config import (
     LLMFallbackSettings,
     LLMFrontSettings,
     LLMLiveEvalSettings,
+    LLMReportSettings,
     ProvidersSettings,
 )
 from interview.providers.base import ChatMessage
@@ -39,6 +40,7 @@ def provider_settings() -> ProvidersSettings:
         llm_front=read(LLMFrontSettings),
         llm_eval=read(LLMEvalSettings),
         llm_live_eval=read(LLMLiveEvalSettings),
+        llm_report=read(LLMReportSettings),
         llm_fallback=read(LLMFallbackSettings),
         bailian=read(BailianSettings),
         deepseek=read(DeepSeekSettings),

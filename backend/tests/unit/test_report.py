@@ -62,6 +62,7 @@ class Script:
         self.summary_entered = asyncio.Event()
         self.summary_gate: asyncio.Event | None = None
         self.bad_outputs: dict[str, int] = {}
+        self.hang: set[str] = set()  # 这些题的评分永远不返回
 
     def reply(self, messages: Sequence[ChatMessage]) -> str:
         content = "\n".join(message["content"] for message in messages)
@@ -115,6 +116,9 @@ class DelayedLLM(FakeLLM):
         self.script.peak = max(self.script.peak, self.script.active)
         self.script.entered.set()
         try:
+            content = "\n".join(message["content"] for message in messages)
+            if any(f"题目：{key}" in content for key in self.script.hang):
+                await asyncio.Event().wait()
             if "ReportSummaryDraft" in messages[0]["content"]:
                 self.script.summary_entered.set()
                 if self.script.summary_gate is not None:
@@ -509,3 +513,29 @@ async def test_no_scored_competencies_have_no_overall_score(
     if no_answers:
         assert harness.script.calls == {"summary": 1}
         assert all(not q.asked for q in body.questions)
+
+
+async def test_questions_past_deadline_degrade_but_keep_finished_ones(
+    harness: ReportHarness,
+) -> None:
+    harness.script.hang = {"q2"}
+    harness.settings.total_timeout_s = 1.0
+    harness.settings.question_timeout_s = 0.6
+    assert report.questions_deadline_s(harness.settings) == 0.5
+    await harness.generate()
+    row = await harness.row()
+    assert row.status == ReportStatus.READY
+    body = report.ReportBody.model_validate(row.summary_json)
+    scores = {q.question_id: q.score for q in body.questions}
+    assert scores == {"q1": 5, "q2": None, "q3": 3, "q4": 4}
+    assert body.degraded == ["q2: 评分超时"]
+    assert harness.script.calls["summary"] == 1
+    assert {e.question_id for e in await harness.evaluations()} == {"q1", "q2", "q3", "q4"}
+
+
+async def test_all_questions_past_deadline_fail_the_report(harness: ReportHarness) -> None:
+    harness.script.hang = {"q1", "q2", "q3", "q4"}
+    harness.settings.total_timeout_s = 1.0
+    harness.settings.question_timeout_s = 0.6
+    await harness.generate()
+    assert (await harness.row()).status == ReportStatus.FAILED
