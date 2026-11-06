@@ -315,6 +315,8 @@ class FallbackLLM:
             start(self._primary),
             lambda: start(self._backup),
             lambda exc: _log_failover(self._slot, self._primary, self._backup, exc),
+            served_by=(self._primary.provider, self._primary.model),
+            backup=(self._backup.provider, self._backup.model),
         )
 
     async def complete(
@@ -349,11 +351,25 @@ class _FailoverStream:
         primary: LLMStream,
         start_backup: Callable[[], LLMStream],
         on_failover: Callable[[Exception], None],
+        *,
+        served_by: tuple[str, str] = ("", ""),
+        backup: tuple[str, str] = ("", ""),
     ) -> None:
         self._current = primary
         self._start_backup = start_backup
         self._on_failover = on_failover
         self._started = False  # 已经吐出过片段，或已经切换过
+        self._served_by = served_by
+        self._backup = backup
+
+    @property
+    def provider(self) -> str:
+        """实际作答的厂商：切到备用后是备用的（challenges C10）。"""
+        return self._served_by[0]
+
+    @property
+    def model(self) -> str:
+        return self._served_by[1]
 
     @property
     def usage(self) -> LLMUsage | None:
@@ -375,6 +391,7 @@ class _FailoverStream:
             self._started = True
             self._on_failover(exc)
             self._current = self._start_backup()
+            self._served_by = self._backup
             chunk = await anext(self._current)
         self._started = True
         return chunk

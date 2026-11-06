@@ -207,7 +207,7 @@ def aggregate(sessions: Sequence[SessionMetrics], stability: Stability | None) -
         ),
         Metric(
             key="live_eval_on_time",
-            name=f"实时评估在 {wait_ms / 1000:g} 秒内返回的比例（超时就不追问，按计划换题）",
+            name=f"实时评估在 {wait_ms / 1000:g} 秒内给出决策的比例（超时就不追问，按计划换题）",
             value=on_time,
             target="≥ 95%",
             passed=on_time >= 0.95 if on_time is not None else None,

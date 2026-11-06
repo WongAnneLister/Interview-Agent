@@ -1,11 +1,18 @@
-"""实时评估：模型打分与原地引用校验，决定追问或换题；不做编排和入库。"""
+"""实时评估：模型打分与原地引用校验，决定追问或换题；不做编排和入库。
+
+传入 on_decision 时流式读取模型输出：JSON 前两个字段 next_action、follow_up_focus 一到齐就回调，
+编排器据此决策，不必等分数、证据写完（challenges C19：真实回答下完整输出要 3–5 秒）。
+"""
 
 from __future__ import annotations
 
+import json
+import re
 import time
 import unicodedata
 import uuid
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from typing import Literal, Self
 
 import structlog
@@ -106,6 +113,59 @@ class EvidenceQuote(BaseModel):
     end_ms: int
 
 
+@dataclass(frozen=True)
+class EarlyDecision:
+    """从流式输出里提前读到的决策，已按与完整结果相同的规则改写（追问上限、泄露要点）。"""
+
+    action: NextAction
+    focus: str
+    override_reason: OverrideReason | None
+    decision_ms: int
+
+
+_ACTION_FIELD = re.compile(r'"next_action"\s*:\s*"([a-z_]+)"')
+_FOCUS_FIELD = re.compile(r'"follow_up_focus"\s*:\s*"((?:[^"\\]|\\.)*)"')
+
+
+def extract_decision(text: str) -> tuple[NextAction, str] | None:
+    """从不完整的 JSON 里取 next_action 和 follow_up_focus；还不够做决策时返回 None。
+
+    追问需要等追问方向的字符串闭合；换题、换阶段不需要追问方向。
+    """
+    action_match = _ACTION_FIELD.search(text)
+    if action_match is None:
+        return None
+    try:
+        action = NextAction(action_match[1])
+    except ValueError:
+        return None
+    if action != NextAction.FOLLOW_UP:
+        return action, ""
+    focus_match = _FOCUS_FIELD.search(text)
+    if focus_match is None:
+        return None
+    try:
+        focus = str(json.loads(f'"{focus_match[1]}"'))
+    except json.JSONDecodeError:
+        return None
+    return (action, focus) if normalize_quote(focus) else None
+
+
+def apply_overrides(
+    action: NextAction, focus: str, data: EvaluationInput
+) -> tuple[NextAction, str, OverrideReason | None]:
+    """追问已达上限或追问方向含要点原文时改成换题（不让模型重试，C1 实测重试多 1.5 秒）。"""
+    reason: OverrideReason | None = None
+    if action == NextAction.FOLLOW_UP:
+        if data.follow_ups >= data.max_follow_ups:
+            reason = "follow_up_limit"
+        elif focus_leaks_key_point(focus, data.question.key_points):
+            reason = "focus_leak"
+    if reason is not None:
+        action = NextAction.NEXT_QUESTION
+    return action, (focus if action == NextAction.FOLLOW_UP else ""), reason
+
+
 class EvaluationResult(BaseModel):
     question_id: str
     competency: str
@@ -125,6 +185,7 @@ class EvaluationResult(BaseModel):
     prompt_version: str
     latency_ms: int
     retries: int
+    decision_ms: int | None = None  # 流式提前决策时，从开始到拿到决策的耗时
 
 
 def normalize_quote(text: str) -> str:
@@ -207,20 +268,43 @@ def _count_evidence(kept: int, dropped: int) -> None:
 
 
 async def _evaluate_draft(
-    llm: LLMProvider, data: EvaluationInput, *, evidence_feedback: bool
+    llm: LLMProvider,
+    data: EvaluationInput,
+    *,
+    evidence_feedback: bool,
+    on_text: Callable[[str], None] | None = None,
 ) -> StructuredResult[EvaluationDraft]:
     return await generate_structured(
         llm,
         _render(data, evidence_feedback=evidence_feedback),
         EvaluationDraft,
         max_tokens=2048,
+        on_text=on_text,
     )
 
 
 async def evaluate(
-    llm: LLMProvider, data: EvaluationInput, *, interview_id: uuid.UUID
+    llm: LLMProvider,
+    data: EvaluationInput,
+    *,
+    interview_id: uuid.UUID,
+    on_decision: Callable[[EarlyDecision], None] | None = None,
 ) -> EvaluationResult:
+    """on_decision 不为空时流式调用，决策字段一到齐就回调一次；最终结果沿用这次决策。"""
     started = time.perf_counter()
+    early: EarlyDecision | None = None
+
+    def watch(text: str) -> None:
+        nonlocal early
+        if early is not None or on_decision is None:
+            return
+        found = extract_decision(text)
+        if found is None:
+            return
+        action, focus, reason = apply_overrides(*found, data)
+        early = EarlyDecision(action, focus, reason, int((time.perf_counter() - started) * 1000))
+        on_decision(early)
+
     evidence_dropped = 0
     evidence_retried = False
     retries = 0
@@ -229,7 +313,9 @@ async def evaluate(
         interview_id=str(interview_id),
         role=UsageRole.EVAL.value,
     ) as current:
-        first = await _evaluate_draft(llm, data, evidence_feedback=False)
+        first = await _evaluate_draft(
+            llm, data, evidence_feedback=False, on_text=watch if on_decision else None
+        )
         retries += first.retries
         kept, dropped = validate_evidence(first.value.evidence, data.turns)
         _count_evidence(len(kept), dropped)
@@ -251,19 +337,16 @@ async def evaluate(
         score_nulled = not kept and (draft.score is not None or evidence_retried)
         if score_nulled:
             _SCORE_NULLED_COUNTER.inc()
-        action = draft.next_action
-        override_reason: OverrideReason | None = None
-        if action == NextAction.FOLLOW_UP:
-            # 两种情况都由代码改成换题，不让模型重试：结果确定，也省一次调用（C1 实测重试多 1.5 秒）
-            if data.follow_ups >= data.max_follow_ups:
-                override_reason = "follow_up_limit"
-            elif focus_leaks_key_point(draft.follow_up_focus, data.question.key_points):
-                override_reason = "focus_leak"
+        if early is not None:
+            # 编排器已按提前读到的决策行动，结果里记录同一个决策，保持一致
+            action, focus, override_reason = early.action, early.focus, early.override_reason
+        else:
+            action, focus, override_reason = apply_overrides(
+                draft.next_action, draft.follow_up_focus, data
+            )
         action_overridden = override_reason is not None
-        if action_overridden:
-            action = NextAction.NEXT_QUESTION
+        if override_reason is not None:
             _OVERRIDE_COUNTER.labels(reason=override_reason).inc()
-        focus = "" if action != NextAction.FOLLOW_UP else draft.follow_up_focus
         latency_ms = int((time.perf_counter() - started) * 1000)
         current.set_attributes(
             {
@@ -275,6 +358,7 @@ async def evaluate(
                 "evaluator.action_overridden": action_overridden,
                 "evaluator.override_reason": override_reason or "",
                 "evaluator.latency_ms": latency_ms,
+                "evaluator.decision_ms": early.decision_ms if early else -1,
             }
         )
         result = EvaluationResult(
@@ -296,6 +380,7 @@ async def evaluate(
             prompt_version=f"{used.prompt_id}@{used.prompt_version}",
             latency_ms=latency_ms,
             retries=retries,
+            decision_ms=early.decision_ms if early else None,
         )
     log.info(
         "evaluator_evaluated",
@@ -309,5 +394,6 @@ async def evaluate(
         override_reason=result.override_reason,
         retries=result.retries,
         latency_ms=result.latency_ms,
+        decision_ms=result.decision_ms,
     )
     return result

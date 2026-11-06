@@ -206,6 +206,7 @@ class InterviewStore:
             "follow_up_focus": result.follow_up_focus,
             "override_reason": result.override_reason,
             "latency_ms": result.latency_ms,
+            "decision_ms": result.decision_ms,
             "evidence_dropped": result.evidence_dropped,
             "evidence_retried": result.evidence_retried,
             "retries": result.retries,

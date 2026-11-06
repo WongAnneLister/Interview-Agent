@@ -80,7 +80,11 @@ async def load_session(
             jd_text=interview.jd_text,
             turns=[TurnView(t.id, t.role, t.text, t.question_id) for t in turns],
             live_evals={
-                e.turn_id: (e.next_action, _int(e.detail_json.get("latency_ms")))
+                # 有提前决策时，编排器等的是 decision_ms，不是完整评估的 latency_ms
+                e.turn_id: (
+                    e.next_action,
+                    _int(e.detail_json.get("decision_ms")) or _int(e.detail_json.get("latency_ms")),
+                )
                 for e in evals
                 if e.phase is EvaluationPhase.LIVE and e.turn_id is not None
             },

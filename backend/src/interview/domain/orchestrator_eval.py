@@ -1,6 +1,7 @@
 """编排器每轮的后台工作：实时评估、评估落库、预算检查，以及“最多等多久”的降级规则。
 
 评估和预算查询在候选人说完后立刻启动，与过渡语并行；等待上限从启动时算起。
+评估流式进行：决策字段一到齐就可以用（EarlyDecision），不必等分数和证据写完（challenges C19）。
 评估任务从不取消：超时或出错只影响这一轮的决策，晚到的结果照样落库。
 """
 
@@ -11,12 +12,17 @@ import time
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from interview.domain.evaluator import EvaluationInput, EvaluationResult, evaluate
+from interview.domain.evaluator import (
+    EarlyDecision,
+    EvaluationInput,
+    EvaluationResult,
+    evaluate,
+)
 from interview.domain.orchestrator_store import InterviewStore
 from interview.observability import budget
 from interview.observability.budget import BudgetStatus
@@ -66,13 +72,16 @@ class TurnBackground:
         self._span = span
         self._started = time.perf_counter()
         self._eval: asyncio.Task[EvaluationResult] | None = None
+        self._early: asyncio.Future[EarlyDecision] = asyncio.get_running_loop().create_future()
         with span.activate():
             self._budget = asyncio.create_task(
                 budget.check(interview_id, user_id=user_id, sessionmaker=sessionmaker)
             )
             if evaluation is not None:
                 llm, data, turn_id = evaluation
-                self._eval = asyncio.create_task(evaluate(llm, data, interview_id=interview_id))
+                self._eval = asyncio.create_task(
+                    evaluate(llm, data, interview_id=interview_id, on_decision=self._on_decision)
+                )
                 track(asyncio.create_task(self._store_evaluation(self._eval, turn_id)))
         track(self._budget)
 
@@ -83,24 +92,32 @@ class TurnBackground:
         degraded = False
         wait_ms = 0
         if self._eval is not None:
-            remaining = wait_s - (time.perf_counter() - self._started)
-            try:
-                result = await asyncio.wait_for(
-                    asyncio.shield(self._eval), timeout=max(0.0, remaining)
-                )
-                action = result.next_action.value
-                focus = result.follow_up_focus
-            except (ProviderError, StructuredOutputError) as exc:
-                # ProviderTimeout 也是 TimeoutError，所以先接 ProviderError，计为 error
+            remaining = max(0.0, wait_s - (time.perf_counter() - self._started))
+            # 提前决策和完整结果谁先到用谁；都没到就超时降级
+            await asyncio.wait(
+                {self._early, self._eval}, timeout=remaining, return_when=asyncio.FIRST_COMPLETED
+            )
+            if self._early.done():
+                early = self._early.result()
+                action, focus = early.action.value, early.focus
+            elif self._eval.done() and self._eval.exception() is None:
+                result = self._eval.result()
+                action, focus = result.next_action.value, result.follow_up_focus
+            elif self._eval.done():
+                exc = self._eval.exception()
                 degraded, action = True, "next_question"
-                _EVAL_DEGRADED.labels(reason="error").inc()
-                log.warning(
-                    "orchestrator_eval_degraded",
-                    interview_id=str(self._interview_id),
-                    reason="error",
-                    error=type(exc).__name__,
-                )
-            except TimeoutError:
+                if isinstance(exc, ProviderError | StructuredOutputError):
+                    # ProviderTimeout 也是 TimeoutError，所以单独计为 error
+                    _EVAL_DEGRADED.labels(reason="error").inc()
+                    log.warning(
+                        "orchestrator_eval_degraded",
+                        interview_id=str(self._interview_id),
+                        reason="error",
+                        error=type(exc).__name__,
+                    )
+                else:
+                    raise cast(BaseException, exc)
+            else:
                 degraded, action = True, "next_question"
                 _EVAL_DEGRADED.labels(reason="timeout").inc()
             elapsed = time.perf_counter() - self._started
@@ -132,6 +149,10 @@ class TurnBackground:
                 spent_cny=str(result.interview.spent_cny),
             )
         return result.status
+
+    def _on_decision(self, decision: EarlyDecision) -> None:
+        if not self._early.done():
+            self._early.set_result(decision)
 
     async def _store_evaluation(
         self, task: asyncio.Task[EvaluationResult], turn_id: uuid.UUID

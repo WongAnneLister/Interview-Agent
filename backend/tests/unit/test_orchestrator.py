@@ -247,6 +247,8 @@ async def make_harness(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[Any]:
         actions: Sequence[str] | None = None,
         eval_default: str = "next_question",
         eval_delay_s: float = 0.0,
+        eval_chunk_size: int = 10_000,
+        eval_chunk_delay_s: float = 0.0,
         eval_errors: Sequence[ProviderError] = (),
         front_reply: str = FRONT_REPLY,
         front_errors: Sequence[ProviderError] = (),
@@ -264,7 +266,8 @@ async def make_harness(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[Any]:
         eval_llm = FakeLLM(
             reply=script.reply,
             model="fake-eval",
-            chunk_size=10_000,
+            chunk_size=eval_chunk_size,
+            chunk_delay_s=eval_chunk_delay_s,
             first_token_delay_s=eval_delay_s,
             errors=eval_errors,
         )
@@ -698,6 +701,32 @@ async def test_transition_time_counts_toward_eval_deadline(make_harness: Any) ->
     assert time.perf_counter() - started < 0.25
     assert metric("interview_orchestrator_eval_degraded_total", reason="timeout") == before + 1
     await harness.orchestrator.aclose()
+
+
+async def test_early_decision_beats_wait_limit_while_full_eval_is_slow(make_harness: Any) -> None:
+    # 每片 8 个字、间隔 0.05 秒：完整 JSON 约 1.5 秒，超过 0.8 秒的上限；
+    # 决策字段在前 0.5 秒内到齐，编排器据此追问，不降级
+    before = metric("interview_orchestrator_eval_degraded_total", reason="timeout")
+    harness = await make_harness(
+        actions=["follow_up"],
+        eval_chunk_size=8,
+        eval_chunk_delay_s=0.05,
+        config=OrchestratorConfig(eval_wait_s=0.8),
+    )
+    await open_to_deep(harness)
+    started = time.perf_counter()
+    await collect(harness.orchestrator.on_user_turn(CANDIDATE_TEXT, 10_000, 20_000))
+    assert time.perf_counter() - started < 0.8
+    state = harness.orchestrator.state
+    assert state is not None and state.follow_ups == 1
+    assert metric("interview_orchestrator_eval_degraded_total", reason="timeout") == before
+    await harness.orchestrator.aclose()  # 等完整评估写库
+    async with harness.sessionmaker() as session:
+        (row,) = await EvaluationRepository(session, USER).list(
+            Evaluation.phase == EvaluationPhase.LIVE
+        )
+    assert row.next_action == NextAction.FOLLOW_UP
+    assert 0 < row.detail_json["decision_ms"] < row.detail_json["latency_ms"]
 
 
 async def test_slow_budget_check_does_not_block_and_is_awaited_on_close(

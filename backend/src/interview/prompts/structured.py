@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -26,7 +26,7 @@ from pydantic import BaseModel, ValidationError
 
 from interview.observability.tracing import LF
 from interview.prompts.loader import RenderedPrompt
-from interview.providers.base import ChatMessage, LLMProvider
+from interview.providers.base import ChatMessage, LLMProvider, LLMResult
 from interview.providers.observed import marked_retry
 
 DEFAULT_MAX_RETRIES = 2
@@ -122,6 +122,39 @@ def with_schema(messages: list[ChatMessage], schema: type[BaseModel]) -> list[Ch
     return [{"role": "system", "content": instruction}, *messages]
 
 
+async def _call(
+    llm: LLMProvider,
+    messages: list[ChatMessage],
+    *,
+    max_tokens: int,
+    temperature: float,
+    timeout_s: float | None,
+    extra: Mapping[str, Any] | None,
+    on_text: Callable[[str], None] | None,
+) -> LLMResult:
+    kwargs: dict[str, Any] = {
+        "max_tokens": max_tokens,
+        "temperature": temperature,
+        "timeout_s": timeout_s,
+        "extra": extra,
+    }
+    if on_text is None:
+        return await llm.complete(messages, **kwargs)
+    text = ""
+    async with llm.stream_chat(messages, **kwargs) as stream:
+        async for chunk in stream:
+            text += chunk
+            on_text(text)
+    # 主备切换后流对象知道实际作答的是谁；普通适配器的流没有这两个属性，取实例自己的
+    return LLMResult(
+        text=text,
+        usage=stream.usage,
+        first_token_ms=stream.first_latency_ms,
+        provider=str(getattr(stream, "provider", "") or llm.provider),
+        model=str(getattr(stream, "model", "") or llm.model),
+    )
+
+
 async def generate_structured[T: BaseModel](
     llm: LLMProvider,
     prompt: RenderedPrompt,
@@ -133,10 +166,13 @@ async def generate_structured[T: BaseModel](
     max_retries: int = DEFAULT_MAX_RETRIES,
     json_mode: bool = True,
     context: Mapping[str, Any] | None = None,
+    on_text: Callable[[str], None] | None = None,
 ) -> StructuredResult[T]:
     """调用大模型生成符合 schema 的对象。max_tokens 要留足，JSON 被截断会被当作非法输出重试。
 
     context 透传给 model_validate_json()，供模型校验器读取（如计划阶段的 PlanContext）。
+    on_text 不为空时改用流式调用，每收到一段就把目前为止的全文传给它（实时评估据此提前决策）；
+    重试的每次调用都会从头再传。
     """
     current = trace.get_current_span()
     current.set_attributes(
@@ -155,12 +191,14 @@ async def generate_structured[T: BaseModel](
     errors: list[str] = []
     for attempt in range(max_retries + 1):
         with marked_retry(attempt > 0):
-            reply = await llm.complete(
+            reply = await _call(
+                llm,
                 messages,
                 max_tokens=max_tokens,
                 temperature=temperature,
                 timeout_s=timeout_s,
                 extra=extra,
+                on_text=on_text,
             )
         try:
             value = parse(reply.text, schema, context=context)

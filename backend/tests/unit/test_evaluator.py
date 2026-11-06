@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import uuid
 from typing import Any
@@ -18,11 +19,13 @@ from interview.db.models import NextAction, TurnRole, UsageRole
 from interview.domain.evaluator import (
     MIN_QUOTE_CHARS,
     DraftEvidence,
+    EarlyDecision,
     EvaluationDraft,
     EvaluationInput,
     EvaluationResult,
     TranscriptTurn,
     evaluate,
+    extract_decision,
     focus_leaks_key_point,
     normalize_quote,
     validate_evidence,
@@ -546,3 +549,98 @@ async def test_logs_do_not_contain_answer_or_rationale() -> None:
     logged = json.dumps(logs, ensure_ascii=False, default=str)
     assert "PRIVATE_ANSWER" not in logged
     assert "PRIVATE_RATIONALE" not in logged
+
+
+# ---- 流式提前决策（challenges C19）----
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ('{"next_act', None),
+        ('{"next_action": "next_question"', (NextAction.NEXT_QUESTION, "")),
+        ('{"next_action": "follow_up", "follow_up_focus": "讲讲失败', None),
+        (
+            '{"next_action": "follow_up", "follow_up_focus": "讲讲\\"失败\\"怎么办", "sc',
+            (NextAction.FOLLOW_UP, '讲讲"失败"怎么办'),
+        ),
+        ('{"next_action": "follow_up", "follow_up_focus": "  ", "score": 3', None),
+        ('{"next_action": "bogus"', None),
+    ],
+    ids=["no-action", "next-question", "focus-open", "focus-escaped", "blank-focus", "bad-action"],
+)
+def test_extract_decision(text: str, expected: tuple[NextAction, str] | None) -> None:
+    assert extract_decision(text) == expected
+
+
+async def test_early_decision_arrives_before_full_result() -> None:
+    # 每个片段 2 个字、间隔 10 毫秒：完整 JSON 要好几秒，决策字段在前 1 秒内就到
+    llm = FakeLLM(reply=reply_json(draft()), chunk_size=2, chunk_delay_s=0.01)
+    decisions: list[EarlyDecision] = []
+    task = asyncio.create_task(
+        evaluate(llm, INPUT, interview_id=INTERVIEW_ID, on_decision=decisions.append)
+    )
+    while not decisions:
+        assert not task.done()
+        await asyncio.sleep(0.01)
+    assert not task.done()
+    (decision,) = decisions
+    assert (decision.action, decision.focus) == (NextAction.FOLLOW_UP, "请举一个线上故障的具体例子")
+    result = await task
+    assert len(decisions) == 1
+    assert result.decision_ms == decision.decision_ms < result.latency_ms
+    assert result.score == 4 and result.evidence
+
+
+async def test_early_decision_applies_the_same_overrides() -> None:
+    limited = INPUT.model_copy(update={"follow_ups": 2, "max_follow_ups": 2})
+    decisions: list[EarlyDecision] = []
+    llm = FakeLLM(reply=reply_json(draft()), chunk_size=5)
+    result = await evaluate(llm, limited, interview_id=INTERVIEW_ID, on_decision=decisions.append)
+    assert decisions[0].action == NextAction.NEXT_QUESTION
+    assert decisions[0].override_reason == "follow_up_limit"
+    assert (result.next_action, result.override_reason) == (
+        NextAction.NEXT_QUESTION,
+        "follow_up_limit",
+    )
+
+
+async def test_result_keeps_early_decision_even_if_evidence_retry_changes_it() -> None:
+    no_evidence = reply_json(draft(evidence=[]))
+    retried = reply_json(draft(next_action="next_question", follow_up_focus=""))
+    decisions: list[EarlyDecision] = []
+    result = await evaluate(
+        scripted(no_evidence, retried),
+        INPUT,
+        interview_id=INTERVIEW_ID,
+        on_decision=decisions.append,
+    )
+    assert result.evidence_retried
+    assert result.next_action == decisions[0].action == NextAction.FOLLOW_UP
+
+
+async def test_streamed_result_records_the_backup_that_answered(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def record(**_kwargs: Any) -> None:
+        return None
+
+    monkeypatch.setattr(usage, "record_usage", record)
+    settings = make_settings().providers
+    settings.llm_eval.provider, settings.llm_eval.model = "primary", "eval-max"
+    settings.llm_fallback.provider, settings.llm_fallback.model = "backup", "backup-flash"
+    primary = FakeLLM(model="eval-max", errors=[ProviderTimeout("超时")])
+    backup = FakeLLM(reply=reply_json(draft()), model="backup-flash", chunk_size=10)
+    registry = ProviderRegistry(
+        settings,
+        factories=ProviderFactories(
+            llm={"primary": lambda _role: primary, "backup": lambda _role: backup}
+        ),
+    )
+    try:
+        llm = registry.llm("llm_eval", CallContext(user_id=USER, usage_role=UsageRole.EVAL))
+        result = await evaluate(llm, INPUT, interview_id=INTERVIEW_ID, on_decision=lambda _d: None)
+    finally:
+        await registry.aclose()
+    assert (result.provider, result.model) == ("fake", "backup-flash")
+    assert result.decision_ms is not None
