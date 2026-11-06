@@ -62,6 +62,8 @@
 | 2026-10-18 | **deepseek-flash 关思考最快**：`evaluate()` 完整耗时 P50 2194 / P95 3867 ms（15 次）；15 次里 6 次因追问方向含要点原文触发一次格式重试，每次多约 1.5 秒；不重试的 9 次都在 1.6–2.4 秒 | `test_evaluator_live.py` 15 次 + 10 次统计重试原因 | 唯一接近 2.5 秒的型号；减少重试是压 P95 的关键 |
 | 2026-10-18 | 打分水平：同一段回答 max 15 次都给 4 分，deepseek-flash 13 次 3 分、2 次 4 分；证据都有效，没有触发证据重评 | 同上 | 实时评分只用于决定追问，不对外展示，偏严可以接受；报告评分仍固定一个型号 |
 | 2026-10-19 | **改成“泄露要点不重试”后，deepseek-flash 关思考 `evaluate()` P50 1958 / P95 2692 ms**（15 次，格式重试 0 次）；另 20 次 P50 2099 / P95 2340 / 最慢 2390 ms，其中 1 次因追问方向含要点被改成换题 | `test_evaluator_live.py` 15 次（经 `live_eval_llm()`）+ 20 次统计 `override_reason` | P95 从 3.9 秒降到约 2.5 秒；已设为 `llm_live_eval`，见 [ADR-0002](../adr/0002-split-eval-roles.md) |
+| 2026-11-06 | **评测中实时评估 deepseek-flash 关思考耗时 9.7–16.8 秒**（9 次全部超过 2.5 秒等待上限，与 2026-10-19 的 P95 2.7 秒差很多）；当时 3 场面试并发，模拟候选人也用同一个 DeepSeek 账号 | `make eval-quick` 2026-11-06_231607，evaluations.detail_json.latency_ms | 每轮都降级为按计划换题，等于没有追问；原因待查，见 [challenges.md C19](../challenges.md) |
+| 2026-11-06 | **报告评分 qwen3.8-max 开思考，3 份报告都在 90 秒总时限处失败**（TimeoutError，耗时 90–97 秒），每份只有 3 道题 | 同上，reports 表 | 报告功能在默认配置下不可用；见 [challenges.md C20](../challenges.md) |
 
 ## 对照 PRD 延迟预算（候选人说完 → 听到面试官首个字）
 
