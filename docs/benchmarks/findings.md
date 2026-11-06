@@ -64,6 +64,8 @@
 | 2026-10-19 | **改成“泄露要点不重试”后，deepseek-flash 关思考 `evaluate()` P50 1958 / P95 2692 ms**（15 次，格式重试 0 次）；另 20 次 P50 2099 / P95 2340 / 最慢 2390 ms，其中 1 次因追问方向含要点被改成换题 | `test_evaluator_live.py` 15 次（经 `live_eval_llm()`）+ 20 次统计 `override_reason` | P95 从 3.9 秒降到约 2.5 秒；已设为 `llm_live_eval`，见 [ADR-0002](../adr/0002-split-eval-roles.md) |
 | 2026-11-06 | **评测中实时评估 deepseek-flash 关思考耗时 9.7–16.8 秒**（9 次全部超过 2.5 秒等待上限，与 2026-10-19 的 P95 2.7 秒差很多）；当时 3 场面试并发，模拟候选人也用同一个 DeepSeek 账号 | `make eval-quick` 2026-11-06_231607，evaluations.detail_json.latency_ms | 每轮都降级为按计划换题，等于没有追问；原因待查，见 [challenges.md C19](../challenges.md) |
 | 2026-11-06 | **报告评分 qwen3.8-max 开思考，3 份报告都在 90 秒总时限处失败**（TimeoutError，耗时 90–97 秒），每份只有 3 道题 | 同上，reports 表 | 报告功能在默认配置下不可用；见 [challenges.md C20](../challenges.md) |
+| 2026-11-07 | C19 排查：**deepseek-flash 关思考单独跑 `evaluate()` P50 2613 / P95 2853 ms**（15 次，无重试）；并发 3 个各 2.2–2.8 秒，并发 6 个各 2.3–2.8 秒，并发不变慢 | `test_evaluator_live.py` 15 次 + 并发脚本 | 评估本身略超 2.5 秒上限 |
+| 2026-11-07 | **开发数据库（VPS，经 SSH 隧道）新建连接 10.5 秒，单次查询往返 0.4–1.2 秒**；本机直连 VPS 的 TCP 建连 0.43–1.4 秒 | 脚本测 `select 1` 10 次、15 个并发；curl 测 TCP 建连 | 用量写库在模型调用的关键路径上：同样的评估写库时 4.6–8.5 秒，丢弃用量时 2.4–3.1 秒（各 3 次） |
 
 ## 对照 PRD 延迟预算（候选人说完 → 听到面试官首个字）
 
