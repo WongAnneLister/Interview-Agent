@@ -3,6 +3,18 @@
     "version": 1,
     "hash": "065bb211ad54790b"
   },
+  "eval_judge_followup": {
+    "version": 1,
+    "hash": "a5381b1dc29f233b"
+  },
+  "eval_judge_leak": {
+    "version": 1,
+    "hash": "f9220931658b099f"
+  },
+  "eval_judge_relevance": {
+    "version": 1,
+    "hash": "2368ed1335f3febe"
+  },
   "evaluate_answer": {
     "version": 1,
     "hash": "906c99fff1a59216"
