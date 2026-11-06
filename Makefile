@@ -136,7 +136,7 @@ tunnel:
 	bash scripts/tunnel.sh
 
 check-env:
-	python scripts/check_env.py
+	$(UV) python $(abspath scripts/check_env.py)
 
 fetch-livekit:
 	bash scripts/fetch-livekit.sh
