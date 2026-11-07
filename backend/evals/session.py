@@ -113,7 +113,8 @@ async def run_session(ec: EvalContext, fixture: Fixture, persona: Persona) -> Se
 def describe(exc: BaseException) -> str:
     """错误类型、信息和抛出位置（项目代码里最近的一帧）；TimeoutError 之类没有信息时靠位置定位。"""
     frames = traceback.extract_tb(exc.__traceback__)
-    ours = [f for f in frames if "/site-packages/" not in f.filename] or frames
+    project = ("/src/interview/", "/evals/", "/tests/")
+    ours = [f for f in frames if any(part in f.filename for part in project)] or frames
     where = f" @ {Path(ours[-1].filename).name}:{ours[-1].lineno} {ours[-1].name}" if ours else ""
     message = str(exc).strip()
     return f"{type(exc).__name__}{': ' + message if message else ''}{where}"
