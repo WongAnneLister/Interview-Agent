@@ -54,7 +54,11 @@ from interview.domain.orchestrator import (
     StageEvent,
     StateEvent,
 )
-from interview.domain.orchestrator_store import EvaluationRepository, TurnRepository
+from interview.domain.orchestrator_store import (
+    EvaluationRepository,
+    InterviewStore,
+    TurnRepository,
+)
 from interview.domain.plan import (
     InterviewPlan,
     InterviewRepository,
@@ -857,4 +861,47 @@ async def test_fallback_line_is_not_followed_by_a_second_question(make_harness: 
     events = await open_to_deep(harness)
     text = events_of(events, InterviewerDone)[-1].text
     assert text.count("深挖 Ledger 项目") == 1
+    await harness.orchestrator.aclose()
+
+
+async def test_load_only_reads_turns_of_this_interview(make_harness: Any) -> None:
+    # 同一用户的另一场面试有同题号 q1 的回答，不能混进本场的历史和评估输入
+    harness = await make_harness()
+    other_id = uuid.uuid4()
+    async with harness.sessionmaker() as session:
+        InterviewRepository(session, USER).add(
+            Interview(
+                id=other_id,
+                user_id=USER,
+                resume_id=RESUME_ID,
+                jd_text="另一场",
+                type=InterviewType.TECHNICAL,
+                style=InterviewStyle.GENTLE,
+                language=Language.ZH,
+                duration_min=20,
+                status=InterviewStatus.COMPLETED,
+            )
+        )
+        TurnRepository(session, USER).add(
+            Turn(
+                interview_id=other_id,
+                user_id=USER,
+                seq=99,
+                role=TurnRole.CANDIDATE,
+                text="另一场面试的回答",
+                start_ms=0,
+                end_ms=1,
+                question_id="q1",
+            )
+        )
+        await session.commit()
+    await open_to_deep(harness)
+    loaded = await InterviewStore(
+        harness.sessionmaker, interview_id=INTERVIEW_ID, user_id=USER
+    ).load()
+    assert all("另一场" not in turn.text for turn in loaded.turns)
+    assert all(
+        "另一场" not in turn.text for turns in loaded.question_turns.values() for turn in turns
+    )
+    assert loaded.turn_seq < 99
     await harness.orchestrator.aclose()

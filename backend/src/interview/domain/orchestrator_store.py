@@ -106,7 +106,10 @@ class InterviewStore:
             rows = list(
                 (
                     await session.scalars(
-                        TurnRepository(session, self._user_id).select().order_by(Turn.seq)
+                        TurnRepository(session, self._user_id)
+                        .select()
+                        .where(Turn.interview_id == self._interview_id)
+                        .order_by(Turn.seq)
                     )
                 ).all()
             )
