@@ -828,3 +828,33 @@ async def test_checkpoint_after_abandoned_stream_saves_advanced_state(make_harne
     assert isinstance(stage, StageEvent) and stage.phase is Phase.SELF_INTRO
     assert state == StateEvent(value="listening")
     await harness.orchestrator.aclose()
+
+
+# ---- 提问时题目由代码接在过渡语后面（challenges C22）----
+
+
+async def test_ask_appends_question_text_after_transition(make_harness: Any) -> None:
+    harness = await make_harness()
+    events = await open_to_deep(harness)
+    done = events_of(events, InterviewerDone)[-1]
+    assert done.text == f"{FRONT_REPLY}深挖 Ledger 项目"
+    sentences = [e.text for e in events_of(events, InterviewerSentence)]
+    assert sentences[-1] == "深挖 Ledger 项目"
+    turns = await fetch_turns(harness)
+    assert turns[-1].text == done.text and turns[-1].question_id == "q1"
+    await harness.orchestrator.aclose()
+
+
+async def test_ask_does_not_repeat_question_the_model_already_said(make_harness: Any) -> None:
+    harness = await make_harness(front_reply="好，我们来深挖 Ledger 项目。")
+    events = await open_to_deep(harness)
+    assert events_of(events, InterviewerDone)[-1].text == "好，我们来深挖 Ledger 项目。"
+    await harness.orchestrator.aclose()
+
+
+async def test_fallback_line_is_not_followed_by_a_second_question(make_harness: Any) -> None:
+    harness = await make_harness(front_errors=[ProviderUnavailable("down")] * 10)
+    events = await open_to_deep(harness)
+    text = events_of(events, InterviewerDone)[-1].text
+    assert text.count("深挖 Ledger 项目") == 1
+    await harness.orchestrator.aclose()

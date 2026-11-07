@@ -1,5 +1,6 @@
 """让前台面试官把一条指令说出来：逐句吐事件，前台模型出错时用固定台词兜底。
 
+提问时模型只说过渡语，题目原文由这里接在后面念出，保证每道题都被问到（challenges C22）。
 只负责“说”这一步，不写库：调用方拿到完整文本后自己写 interviewer turn。
 """
 
@@ -11,7 +12,13 @@ from collections.abc import AsyncGenerator, Sequence
 import structlog
 
 from interview.db.models import InterviewStyle, Language
-from interview.domain.interviewer import HistoryTurn, InterviewerInput, speak
+from interview.domain.evaluator import normalize_quote
+from interview.domain.interviewer import (
+    HistoryTurn,
+    InterviewerInput,
+    appended_question,
+    speak,
+)
 from interview.domain.orchestrator_events import InterviewerDelta, InterviewerSentence
 from interview.domain.state_machine import Directive
 from interview.observability.prometheus import counter
@@ -80,6 +87,15 @@ class Speech:
                 yield InterviewerDelta(text=sentence)
                 yield InterviewerSentence(text=sentence)
             self.text = utterance.text
+            question = appended_question(self._directive)
+            if question and normalize_quote(question) not in normalize_quote(self.text):
+                self.text = (
+                    f"{self.text}{separator_for(self._language)}{question}"
+                    if self.text
+                    else question
+                )
+                yield InterviewerDelta(text=question)
+                yield InterviewerSentence(text=question)
         except ProviderError as exc:
             fallback = fallback_line(self._directive, self._language)
             partial = utterance.text

@@ -24,6 +24,7 @@ from interview.domain.interviewer import (
     SentenceSplitter,
     TransitionPicker,
     _task_text,
+    appended_question,
     clean_output,
     speak,
 )
@@ -455,3 +456,22 @@ async def test_logs_do_not_contain_generated_text_or_history() -> None:
     logged = json.dumps(logs, ensure_ascii=False, default=str)
     assert "PRIVATE_GENERATED_TEXT" not in logged
     assert "PRIVATE_HISTORY" not in logged
+
+
+# ---- 提问时题目由代码念出（challenges C22）----
+
+
+def test_ask_task_asks_for_transition_only() -> None:
+    text = _task_text(ASK)
+    assert "只说一句简短的过渡语" in text and "不要说出题目内容" in text
+    assert "不要复述" in text
+
+
+def test_appended_question_only_for_ask_and_repeated_ask() -> None:
+    question = "如何设计一个高可用的消息队列？"
+    assert appended_question(directive("ask", Phase.TECHNICAL, question_text=question)) == question
+    repeat = directive("repeat", Phase.TECHNICAL, repeat_of="ask", question_text=question)
+    assert appended_question(repeat) == question
+    follow = directive("follow_up", Phase.TECHNICAL, question_text=question, focus="失败重试")
+    assert appended_question(follow) is None
+    assert appended_question(directive("ask", Phase.TECHNICAL, question_text=None)) is None

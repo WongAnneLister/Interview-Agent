@@ -86,11 +86,15 @@ def _base_task(directive: Directive) -> str:
             text += f"从 {directive.transition_from.value} 过渡到 {phase.value}。"
         return text
     if directive.kind == "ask":
-        text = "提出这道题。"
+        # 题目原文由代码接在后面念出（appended_question），模型只说过渡语（challenges C22）
+        text = (
+            "只说一句简短的过渡语，自然地引出下一道题；"
+            "不要说出题目内容，也不要提问，题目会紧接着念出。"
+        )
         if directive.transition_from is not None:
-            text += f"先用一句话从 {directive.transition_from.value} 过渡到 {phase.value}。"
+            text += f"这句话从 {directive.transition_from.value} 过渡到 {phase.value}。"
         if question:
-            text += f"题目：{question}"
+            text += f"\n下一道题（只用来让过渡语衔接自然，不要复述）：{question}"
         return text
     if directive.kind == "follow_up":
         parts = ["围绕追问方向追问一句，不要把追问方向原样念出来。"]
@@ -113,6 +117,12 @@ def _base_task(directive: Directive) -> str:
     if directive.kind == "closing":
         return "感谢候选人，说明报告稍后生成，并道别。"
     return "按指令继续。"
+
+
+def appended_question(directive: Directive) -> str | None:
+    """需要由代码接在模型输出后面念出的题目原文：提问（含重复提问）时才有。"""
+    kind = directive.repeat_of if directive.kind == "repeat" else directive.kind
+    return directive.question_text or None if kind == "ask" else None
 
 
 def _task_text(directive: Directive) -> str:
