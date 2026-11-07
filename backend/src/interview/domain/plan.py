@@ -2,8 +2,8 @@
 
 - 阶段时长由代码计算，不交给模型：以 20 分钟技术面为基准等比缩放，用最大余数法
   取整到秒，保证各阶段之和正好等于总时长。
-- 题目由提示词 plan_questions v1 生成。每个有能力项的阶段容量为 seconds // 180
-  （每题含追问按 3 分钟估算）。
+- 题目由提示词 plan_questions v1 生成。每个有能力项的阶段容量为
+  seconds // SECONDS_PER_QUESTION（每题按 2 分钟备题，问不完的由阶段计时器截止，C21）。
 - 模型输出用 PlanDraft 的 model_validator(mode="after") 校验，PlanContext 通过
   Pydantic 的 validation context 传入：不合格时抛 ValueError，由 generate_structured
   把错误反馈给模型重试；题量超出容量时先裁剪再检查覆盖，裁剪不触发重试。
@@ -75,7 +75,7 @@ _QUESTION_STAGES = frozenset({Stage.RESUME_DEEP_DIVE, Stage.TECHNICAL, Stage.BEH
 
 
 class StageSlot(BaseModel):
-    """一个阶段的时间片。capacity 是无题阶段为 0，有题阶段为 seconds // 180。"""
+    """一个阶段的时间片。capacity 是无题阶段为 0，有题阶段为 seconds // SECONDS_PER_QUESTION。"""
 
     model_config = ConfigDict(extra="ignore")
 
