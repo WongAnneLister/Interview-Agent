@@ -77,7 +77,7 @@ async def _ping_database(engine: AsyncEngine) -> None:
 
 def create_resources(settings: Settings) -> Resources:
     """按配置创建资源。连接都是惰性的：这里不发起网络请求，依赖不可用时由 /readyz 反映。"""
-    engine = create_engine(settings.db.url.get_secret_value())
+    engine = create_engine(settings.db.url.get_secret_value(), db=settings.db)
     instrument_sqlalchemy(engine, enabled=settings.observability.enabled)
     sessionmaker = make_sessionmaker(engine)
     redis_timeout_s = max(REDIS_TIMEOUT_S, settings.app.ready_check_timeout_s)

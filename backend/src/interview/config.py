@@ -65,9 +65,15 @@ class ReportSettings(BaseSettings):
 
 
 class DatabaseSettings(BaseSettings):
+    """数据库连接。开发库经 SSH 隧道访问时建连可能要 10 秒以上，可在 .env 放宽（C23）。"""
+
     model_config = _config("DATABASE_")
 
     url: SecretStr  # 连接串里含密码
+    connect_timeout_s: float = Field(default=10.0, gt=0)  # 建立连接的超时
+    command_timeout_s: float = Field(default=30.0, gt=0)  # 单条语句的超时
+    pool_size: int = Field(default=5, ge=1)  # 常驻连接数
+    max_overflow: int = Field(default=10, ge=0)  # 临时连接数，用完即关
 
 
 class RedisSettings(BaseSettings):

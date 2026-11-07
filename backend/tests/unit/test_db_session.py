@@ -9,6 +9,7 @@ import pytest
 from pydantic import SecretStr
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from interview.config import DatabaseSettings
 from interview.db import session as db_session
 
 URL = "postgresql+asyncpg://u:p@127.0.0.1:1/db"
@@ -17,7 +18,8 @@ URL = "postgresql+asyncpg://u:p@127.0.0.1:1/db"
 @pytest.fixture(autouse=True)
 def _fresh_engine(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     settings = SimpleNamespace(
-        db=SimpleNamespace(url=SecretStr(URL)), observability=SimpleNamespace(enabled=False)
+        db=DatabaseSettings.model_construct(url=SecretStr(URL)),
+        observability=SimpleNamespace(enabled=False),
     )
     monkeypatch.setattr(db_session, "get_settings", lambda: settings)
     db_session.get_engine.cache_clear()
@@ -56,3 +58,20 @@ async def test_dispose_engine_resets_singletons() -> None:
     first = db_session.get_engine()
     await db_session.dispose_engine()
     assert db_session.get_engine() is not first
+
+
+def test_create_engine_uses_database_settings() -> None:
+    db = DatabaseSettings.model_construct(
+        url=SecretStr(URL),
+        connect_timeout_s=30.0,
+        command_timeout_s=60.0,
+        pool_size=15,
+        max_overflow=2,
+    )
+    engine = db_session.create_engine(URL, db=db)
+    pool = engine.sync_engine.pool
+    try:
+        assert pool.size() == 15  # pyright: ignore[reportAttributeAccessIssue]
+        assert pool._max_overflow == 2  # pyright: ignore[reportAttributeAccessIssue]
+    finally:
+        engine.sync_engine.dispose()

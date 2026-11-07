@@ -15,6 +15,7 @@ from datetime import datetime
 
 import structlog
 from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
 from evals import langfuse_scores, results
 from evals.cost import run_cost
@@ -79,13 +80,14 @@ async def run(argv: list[str] | None = None) -> int:
     init_tracing(
         "eval", settings.observability, settings.langfuse, environment=settings.app.app_env
     )
-    engine = create_engine(settings.db.url.get_secret_value())
+    engine = create_engine(settings.db.url.get_secret_value(), db=settings.db)
     sm = make_sessionmaker(engine)
     providers = ProviderRegistry(settings.providers, sessionmaker=sm)
     started = time.perf_counter()
     run_id = datetime.now().strftime("%Y-%m-%d_%H%M%S")
     try:
         try:
+            await warm_up(engine, settings.db.pool_size)
             user_id = await ensure_default_user(engine, EVAL_EMAIL)
         except OSError as exc:
             print(f"连不上数据库（{type(exc).__name__}）：先在另一个终端运行 make tunnel，再重试。")
@@ -166,6 +168,18 @@ async def run(argv: list[str] | None = None) -> int:
     for m in failed:
         print(f"  ❌ {m.name}：{m.value}（目标 {m.target}）")
     return 0
+
+
+async def warm_up(engine: AsyncEngine, size: int) -> None:
+    """并行建好常驻连接：隧道上建一次连接可能要十几秒，别让每场面试排队等（C23）。"""
+    started = time.perf_counter()
+    connections: list[AsyncConnection] = []
+    try:
+        connections = list(await asyncio.gather(*(engine.connect() for _ in range(size))))
+        await asyncio.gather(*(c.execute(select(1)) for c in connections))
+    finally:
+        await asyncio.gather(*(c.close() for c in connections))
+    print(f"数据库连接池预热 {size} 个，用时 {time.perf_counter() - started:.1f} 秒", flush=True)
 
 
 def main() -> None:

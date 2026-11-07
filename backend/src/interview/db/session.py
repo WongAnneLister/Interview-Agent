@@ -14,7 +14,7 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from sqlalchemy.ext.asyncio import create_async_engine as _create_async_engine
 
-from interview.config import get_settings
+from interview.config import DatabaseSettings, get_settings
 from interview.db.scope import UserScopedSession
 from interview.observability.instrument import instrument_sqlalchemy
 
@@ -23,13 +23,21 @@ CONNECT_TIMEOUT_S = 10
 COMMAND_TIMEOUT_S = 30
 
 
-def create_engine(url: str, **kwargs: Any) -> AsyncEngine:
-    """创建带超时设置的异步引擎；kwargs 透传给 create_async_engine（如 poolclass）。"""
+def create_engine(url: str, *, db: DatabaseSettings | None = None, **kwargs: Any) -> AsyncEngine:
+    """创建带超时设置的异步引擎；kwargs 透传给 create_async_engine（如 poolclass）。
+
+    db 不为空时用其中的超时和连接池大小，否则用默认值（迁移、工具脚本不需要调）。
+    """
+    connect_s = db.connect_timeout_s if db else CONNECT_TIMEOUT_S
+    command_s = db.command_timeout_s if db else COMMAND_TIMEOUT_S
+    if db is not None and "poolclass" not in kwargs:
+        kwargs.setdefault("pool_size", db.pool_size)
+        kwargs.setdefault("max_overflow", db.max_overflow)
     return _create_async_engine(
         url,
         pool_pre_ping=True,
         hide_parameters=True,
-        connect_args={"timeout": CONNECT_TIMEOUT_S, "command_timeout": COMMAND_TIMEOUT_S},
+        connect_args={"timeout": connect_s, "command_timeout": command_s},
         **kwargs,
     )
 
@@ -37,7 +45,7 @@ def create_engine(url: str, **kwargs: Any) -> AsyncEngine:
 @lru_cache(maxsize=1)
 def get_engine() -> AsyncEngine:
     settings = get_settings()
-    engine = create_engine(settings.db.url.get_secret_value())
+    engine = create_engine(settings.db.url.get_secret_value(), db=settings.db)
     instrument_sqlalchemy(engine, enabled=settings.observability.enabled)
     return engine
 
