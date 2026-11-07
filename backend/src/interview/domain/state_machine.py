@@ -27,6 +27,8 @@ class MachineConfig:
     max_follow_ups: int = 2
     think_timeout_ms: int = 20_000
     overtime_grace_ms: int = 30_000
+    # 整场剩余不足这么久就不再开新题，直接收尾（challenges C21：冗长候选人在最后 18 秒被问了新题）
+    min_new_question_ms: int = 120_000
 
 
 DEFAULT = MachineConfig()
@@ -213,20 +215,29 @@ def _advance(state: InterviewState, now_ms: int) -> InterviewState:
     return _update(state, active_ms=active, clock_ms=now_ms)
 
 
+def _too_late_for_new_question(
+    plan: InterviewPlan, state: InterviewState, config: MachineConfig
+) -> bool:
+    return _total_deadline(plan) - state.active_ms < config.min_new_question_ms
+
+
 def _enter(
     plan: InterviewPlan,
     state: InterviewState,
     phase: Phase,
     reason: Reason | None,
     from_phase: Phase,
+    config: MachineConfig = DEFAULT,
 ) -> Step:
     if phase is Phase.ENDED:
         return Step(state=_entered(state, Phase.ENDED, None), directive=None)
 
     if _is_question_phase(plan, phase):
+        if _too_late_for_new_question(plan, state, config):
+            return _enter(plan, state, Phase.CLOSING, "total_timeout", from_phase, config)
         question = _first_unasked(plan, phase, state.asked)
         if question is None:
-            return _enter(plan, state, _next_phase(plan, phase), reason, from_phase)
+            return _enter(plan, state, _next_phase(plan, phase), reason, from_phase, config)
         directive = _directive(
             "ask",
             phase,
@@ -253,12 +264,18 @@ def _enter(
     return Step(state=_entered(state, phase, None, directive=directive), directive=directive)
 
 
-def _next_question_or_stage(plan: InterviewPlan, state: InterviewState, reason: Reason) -> Step:
+def _next_question_or_stage(
+    plan: InterviewPlan, state: InterviewState, reason: Reason, config: MachineConfig = DEFAULT
+) -> Step:
+    if _too_late_for_new_question(plan, state, config):
+        return _enter(plan, state, Phase.CLOSING, "total_timeout", state.phase, config)
     if _stage_timed_out(plan, state):
-        return _enter(plan, state, _next_phase(plan, state.phase), "stage_timeout", state.phase)
+        return _enter(
+            plan, state, _next_phase(plan, state.phase), "stage_timeout", state.phase, config
+        )
     question = _first_unasked(plan, state.phase, state.asked)
     if question is None:
-        return _enter(plan, state, _next_phase(plan, state.phase), reason, state.phase)
+        return _enter(plan, state, _next_phase(plan, state.phase), reason, state.phase, config)
     directive = _directive(
         "ask",
         state.phase,
@@ -280,11 +297,13 @@ def _tick(plan: InterviewPlan, state: InterviewState, config: MachineConfig) -> 
     if state.paused:
         return Step(state=state, directive=None)
     if state.phase is not Phase.CLOSING and _total_hard_timed_out(plan, state, config):
-        return _enter(plan, state, Phase.CLOSING, "total_timeout", state.phase)
+        return _enter(plan, state, Phase.CLOSING, "total_timeout", state.phase, config)
     if state.phase is Phase.CLOSING and _stage_hard_timed_out(plan, state, config):
-        return _enter(plan, state, Phase.ENDED, None, state.phase)
+        return _enter(plan, state, Phase.ENDED, None, state.phase, config)
     if state.phase is not Phase.CLOSING and _stage_hard_timed_out(plan, state, config):
-        return _enter(plan, state, _next_phase(plan, state.phase), "stage_timeout", state.phase)
+        return _enter(
+            plan, state, _next_phase(plan, state.phase), "stage_timeout", state.phase, config
+        )
     if _think_timed_out(state, config):
         directive = _directive(
             "check_in",
@@ -305,20 +324,22 @@ def _decision(
         return Step(state=state, directive=None)
     current = _update(state, thinking_since_ms=None)
     if current.phase is Phase.CLOSING:
-        return _enter(plan, current, Phase.ENDED, None, current.phase)
+        return _enter(plan, current, Phase.ENDED, None, current.phase, config)
     if _total_timed_out(plan, current):
-        return _enter(plan, current, Phase.CLOSING, "total_timeout", current.phase)
+        return _enter(plan, current, Phase.CLOSING, "total_timeout", current.phase, config)
     if event.action == "wrap_up":
-        return _enter(plan, current, Phase.CLOSING, "wrap_up", current.phase)
+        return _enter(plan, current, Phase.CLOSING, "wrap_up", current.phase, config)
     if _stage_timed_out(plan, current):
         return _enter(
-            plan, current, _next_phase(plan, current.phase), "stage_timeout", current.phase
+            plan, current, _next_phase(plan, current.phase), "stage_timeout", current.phase, config
         )
     if event.action == "next_stage" and not (
         _is_question_phase(plan, current.phase)
         and _first_unasked(plan, current.phase, current.asked) is not None
     ):
-        return _enter(plan, current, _next_phase(plan, current.phase), "plan", current.phase)
+        return _enter(
+            plan, current, _next_phase(plan, current.phase), "plan", current.phase, config
+        )
     # 本阶段还有题时 next_stage 按换题处理：时间由阶段计时器控制，不让评估提前结束阶段（C21）
     if _is_question_phase(plan, current.phase):
         if event.action == "follow_up":
@@ -336,16 +357,18 @@ def _decision(
                     last_directive=directive,
                 )
                 return Step(state=new_state, directive=directive)
-            return _next_question_or_stage(plan, current, "follow_up_limit")
-        return _next_question_or_stage(plan, current, "plan")
+            return _next_question_or_stage(plan, current, "follow_up_limit", config)
+        return _next_question_or_stage(plan, current, "plan", config)
     if event.action == "follow_up":
         directive = _directive("converse", current.phase)
         new_state = _update(current, last_directive=directive)
         return Step(state=new_state, directive=directive)
-    return _enter(plan, current, _next_phase(plan, current.phase), "plan", current.phase)
+    return _enter(plan, current, _next_phase(plan, current.phase), "plan", current.phase, config)
 
 
-def _command(plan: InterviewPlan, state: InterviewState, event: Command) -> Step:
+def _command(
+    plan: InterviewPlan, state: InterviewState, event: Command, config: MachineConfig = DEFAULT
+) -> Step:
     if event.command == "pause":
         if state.phase is Phase.CLOSING or state.paused:
             return Step(state=state, directive=None)
@@ -367,13 +390,14 @@ def _command(plan: InterviewPlan, state: InterviewState, event: Command) -> Step
         return Step(state=_update(current, paused=False), directive=directive)
     if event.command == "end":
         if current.phase is Phase.CLOSING:
-            return _enter(plan, current, Phase.ENDED, None, current.phase)
+            return _enter(plan, current, Phase.ENDED, None, current.phase, config)
         return _enter(
             plan,
             _update(current, paused=False),
             Phase.CLOSING,
             "user_end",
             current.phase,
+            config,
         )
     if event.command == "repeat":
         if current.paused or current.last_directive is None:
@@ -384,8 +408,10 @@ def _command(plan: InterviewPlan, state: InterviewState, event: Command) -> Step
     if current.paused or current.phase is Phase.CLOSING:
         return Step(state=current, directive=None)
     if _is_question_phase(plan, current.phase):
-        return _next_question_or_stage(plan, current, "user_skip")
-    return _enter(plan, current, _next_phase(plan, current.phase), "user_skip", current.phase)
+        return _next_question_or_stage(plan, current, "user_skip", config)
+    return _enter(
+        plan, current, _next_phase(plan, current.phase), "user_skip", current.phase, config
+    )
 
 
 def _think(state: InterviewState) -> Step:
@@ -422,7 +448,7 @@ def step(
     if isinstance(event, Decision):
         return _decision(plan, current, event, config)
     if isinstance(event, Command):
-        return _command(plan, current, event)
+        return _command(plan, current, event, config)
     return _think(current)
 
 

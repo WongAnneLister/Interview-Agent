@@ -17,6 +17,7 @@ from interview.domain.state_machine import (
     Directive,
     Event,
     InterviewState,
+    MachineConfig,
     Phase,
     Think,
     Tick,
@@ -726,3 +727,45 @@ def test_random_event_sequences_keep_invariants(
     state = step(plan, state, Tick(now_ms=now + 1_000_000_000)).state
     state = step(plan, state, Tick(now_ms=now + 2_000_000_000)).state
     assert state.phase is Phase.ENDED
+
+
+# ---- 整场剩余不足 2 分钟不再开新题（challenges C21）----
+
+
+def near_end_deep_state(remaining_ms: int) -> InterviewState:
+    """深挖阶段第一题刚答完，整场只剩 remaining_ms；阶段本身早已超时。"""
+    now = total_ms(PLAN) - remaining_ms
+    return make_state(
+        Phase.RESUME_DEEP_DIVE,
+        stage_started_ms=stage_start(PLAN, Phase.RESUME_DEEP_DIVE),
+        active_ms=now,
+        current_question_id="q1",
+        asked=["q1"],
+        last_directive=ASK_Q1,
+    )
+
+
+def test_no_new_question_when_less_than_two_minutes_left() -> None:
+    state = near_end_deep_state(60_000)
+    result = step(PLAN, state, Decision(now_ms=state.clock_ms, action="next_question"))
+    assert result.state.phase is Phase.CLOSING
+    assert result.directive is not None
+    assert (result.directive.kind, result.directive.reason) == ("closing", "total_timeout")
+    assert result.state.asked == ["q1"]
+
+
+def test_stage_timeout_near_end_skips_main_stage_and_wraps_up() -> None:
+    # 冗长人设：深挖阶段严重超时，进入技术阶段时整场只剩 18 秒，不该再开技术题
+    state = near_end_deep_state(18_000)
+    result = step(PLAN, state, Tick(now_ms=state.clock_ms + 31_000))
+    assert result.state.phase is Phase.CLOSING
+    assert result.directive is not None and result.directive.kind == "closing"
+
+
+def test_new_question_still_asked_with_enough_time_left() -> None:
+    state = near_end_deep_state(150_000)
+    result = step(PLAN, state, Decision(now_ms=state.clock_ms, action="next_question"))
+    assert result.directive is not None and result.directive.kind == "ask"
+    custom = MachineConfig(min_new_question_ms=200_000)
+    result = step(PLAN, state, Decision(now_ms=state.clock_ms, action="next_question"), custom)
+    assert result.state.phase is Phase.CLOSING
