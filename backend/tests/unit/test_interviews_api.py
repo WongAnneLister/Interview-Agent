@@ -216,8 +216,8 @@ async def test_create_then_get_plan(api: Api) -> None:
     assert plan["stages"] == [
         {"stage": "opening", "seconds": 90, "capacity": 0},
         {"stage": "self_intro", "seconds": 180, "capacity": 0},
-        {"stage": "resume_deep_dive", "seconds": 540, "capacity": 3},
-        {"stage": "technical", "seconds": 720, "capacity": 4},
+        {"stage": "resume_deep_dive", "seconds": 540, "capacity": 4},
+        {"stage": "technical", "seconds": 720, "capacity": 6},
         {"stage": "candidate_questions", "seconds": 180, "capacity": 0},
         {"stage": "closing", "seconds": 90, "capacity": 0},
     ]

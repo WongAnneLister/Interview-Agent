@@ -314,8 +314,12 @@ def _decision(
         return _enter(
             plan, current, _next_phase(plan, current.phase), "stage_timeout", current.phase
         )
-    if event.action == "next_stage":
+    if event.action == "next_stage" and not (
+        _is_question_phase(plan, current.phase)
+        and _first_unasked(plan, current.phase, current.asked) is not None
+    ):
         return _enter(plan, current, _next_phase(plan, current.phase), "plan", current.phase)
+    # 本阶段还有题时 next_stage 按换题处理：时间由阶段计时器控制，不让评估提前结束阶段（C21）
     if _is_question_phase(plan, current.phase):
         if event.action == "follow_up":
             if current.follow_ups < config.max_follow_ups:

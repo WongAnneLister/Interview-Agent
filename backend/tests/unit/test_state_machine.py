@@ -352,6 +352,22 @@ def test_decision_next_stage_enters_next_phase() -> None:
     assert (result.directive.kind, result.directive.reason) == ("ask", "plan")
 
 
+def test_decision_next_stage_asks_remaining_question_in_stage() -> None:
+    # 本阶段还有 q2 没问：next_stage 按换题处理，时间交给阶段计时器（challenges C21）
+    result = step(PLAN, deep_state(), Decision(now_ms=200_000, action="next_stage"))
+    assert result.state.phase is Phase.RESUME_DEEP_DIVE
+    assert result.directive is not None
+    assert (result.directive.kind, result.directive.question_id) == ("ask", "q2")
+
+
+def test_decision_next_stage_moves_on_when_stage_questions_are_used_up() -> None:
+    state = state_at(PLAN, Phase.RESUME_DEEP_DIVE, current_question_id="q2", asked=["q1", "q2"])
+    result = step(PLAN, state, Decision(now_ms=200_000, action="next_stage"))
+    assert result.state.phase is Phase.TECHNICAL
+    assert result.directive is not None
+    assert (result.directive.kind, result.directive.reason) == ("ask", "plan")
+
+
 def test_decision_follow_up_increments() -> None:
     result = step(
         PLAN,

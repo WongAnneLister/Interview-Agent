@@ -40,7 +40,7 @@ from interview.providers.base import LLMProvider
 
 BASELINE_MINUTES = 20
 SECONDS_PER_MINUTE = 60
-SECONDS_PER_QUESTION = 180
+SECONDS_PER_QUESTION = 120  # 多备题、问不完就算：答得短的候选人也能用满时间（challenges C21）
 MAX_QUESTIONS_PER_COMPETENCY = 2
 MAX_DEEP_DIVE_PROJECTS = 3
 PLAN_PROMPT_ID = "plan_questions"

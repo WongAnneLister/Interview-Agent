@@ -12,6 +12,7 @@ import pytest
 from pydantic import ValidationError
 
 from interview.db.models import InterviewStyle, InterviewType, Language
+from interview.domain import plan as plan_module
 from interview.domain.jd import JDParsed
 from interview.domain.plan import (
     MAX_QUESTIONS_PER_COMPETENCY,
@@ -137,6 +138,12 @@ def stored_questions() -> list[Question]:
 # ---- 时间分配 ----
 
 
+@pytest.fixture
+def old_question_time(monkeypatch: pytest.MonkeyPatch) -> None:
+    """按每题 180 秒构造容量很小的计划：这些测试关心阶段题目已满时的裁剪和拒绝。"""
+    monkeypatch.setattr(plan_module, "SECONDS_PER_QUESTION", 180)
+
+
 @pytest.mark.parametrize(
     ("duration", "interview_type", "seconds", "deep", "main", "deep_capacity", "main_capacity"),
     [
@@ -146,8 +153,8 @@ def stored_questions() -> list[Question]:
             [45, 90, 270, 360, 90, 45],
             270,
             360,
-            1,
             2,
+            3,
         ),
         (
             20,
@@ -155,8 +162,8 @@ def stored_questions() -> list[Question]:
             [60, 120, 360, 480, 120, 60],
             360,
             480,
-            2,
-            2,
+            3,
+            4,
         ),
         (
             30,
@@ -164,8 +171,8 @@ def stored_questions() -> list[Question]:
             [90, 180, 540, 720, 180, 90],
             540,
             720,
-            3,
             4,
+            6,
         ),
         (
             15,
@@ -173,8 +180,8 @@ def stored_questions() -> list[Question]:
             [45, 90, 270, 360, 90, 45],
             270,
             360,
-            1,
             2,
+            3,
         ),
         (
             30,
@@ -182,8 +189,8 @@ def stored_questions() -> list[Question]:
             [90, 180, 540, 720, 180, 90],
             540,
             720,
-            3,
             4,
+            6,
         ),
     ],
 )
@@ -377,7 +384,9 @@ def test_trim_caps_two_questions_per_competency() -> None:
     assert set(texts) == {"A1", "B1", "C1", "C2", "D1"}
 
 
-def test_trim_keeps_first_question_of_each_competency_when_stage_is_full() -> None:
+def test_trim_keeps_first_question_of_each_competency_when_stage_is_full(
+    old_question_time: None,
+) -> None:
     _, _, ctx = context_for(15)
     questions = [
         draft_question(Stage.TECHNICAL, "后端开发", text="A1"),
@@ -395,21 +404,27 @@ def test_trim_keeps_first_question_of_each_competency_when_stage_is_full() -> No
 def test_empty_resume_allows_one_deep_dive_without_project() -> None:
     covered, _, ctx = context_for(20, resume=ResumeParsed())
     assert ctx.deep_dive_capacity == 1
-    assert [item.covered for item in covered] == [True, True, True, False]
+    assert [item.covered for item in covered] == [True, True, True, True]
     questions = [
         draft_question(Stage.RESUME_DEEP_DIVE, "后端开发", text="深挖一"),
         draft_question(Stage.RESUME_DEEP_DIVE, "后端开发", text="深挖二"),
         draft_question(Stage.TECHNICAL, "系统设计", text="系统设计题"),
         draft_question(Stage.TECHNICAL, "数据库", text="数据库题"),
+        draft_question(Stage.TECHNICAL, "协作", text="协作题"),
     ]
     draft = draft_with(questions, ctx)
-    assert [question.text for question in draft.questions] == ["深挖一", "系统设计题", "数据库题"]
+    assert [question.text for question in draft.questions] == [
+        "深挖一",
+        "系统设计题",
+        "数据库题",
+        "协作题",
+    ]
     assert all(question.project == "" for question in draft.questions)
 
 
 @pytest.mark.parametrize(
     ("duration", "projects", "expected"),
-    [(15, 2, 1), (20, 1, 1), (20, 2, 2), (30, 2, 2), (30, 5, 3), (20, 0, 1)],
+    [(15, 2, 2), (15, 5, 2), (20, 1, 1), (20, 2, 2), (30, 2, 2), (30, 5, 3), (20, 0, 1)],
 )
 def test_deep_dive_quota_follows_capacity_and_resume(
     duration: int, projects: int, expected: int
@@ -433,7 +448,7 @@ async def test_prompt_states_the_same_deep_dive_limit_as_validation() -> None:
             interview_id=INTERVIEW_ID,
         )
     system, user = (message["content"] for message in llm.calls[0]["messages"][:2])
-    assert "简历深挖题最多 1 道；主阶段题最多 2 道" in user
+    assert "简历深挖题最多 1 道；主阶段题最多 4 道" in user
     assert "project_count" not in system + user and "main_capacity" not in system + user
 
 
@@ -452,7 +467,7 @@ def test_check_questions_rejects_removing_a_covered_competency() -> None:
         check_questions(partial, ctx)
 
 
-def test_check_questions_rejects_stage_over_capacity() -> None:
+def test_check_questions_rejects_stage_over_capacity(old_question_time: None) -> None:
     _, _, ctx = context_for(15)
     questions = [
         Question(
