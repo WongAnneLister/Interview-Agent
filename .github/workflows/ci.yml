@@ -42,7 +42,7 @@ jobs:
         run: make test
 
   frontend:
-    name: frontend (lint, typecheck, test)
+    name: frontend (lint, typecheck, test, build)
     runs-on: ubuntu-latest
     timeout-minutes: 15
     defaults:
@@ -90,3 +90,9 @@ jobs:
       - name: Test
         if: steps.detect.outputs.present == 'true'
         run: pnpm run --if-present test
+
+      - name: Build
+        if: steps.detect.outputs.present == 'true'
+        env:
+          NEXT_PUBLIC_API_BASE_URL: http://127.0.0.1:8000
+        run: pnpm run build

@@ -1,0 +1,25 @@
+@import "tailwindcss";
+
+@theme {
+  --color-ink: #172f35;
+  --color-muted: #586b6d;
+  --color-accent: #0b665a;
+  --color-border: #dce5df;
+  --color-background: #f5f7f2;
+  --font-sans: Arial, "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+
+body {
+  margin: 0;
+  background: var(--color-background);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  font-size: 15px;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+
+:focus-visible {
+  outline: 3px solid #ae792b;
+  outline-offset: 3px;
+}

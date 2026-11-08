@@ -6,7 +6,8 @@ BACKEND := backend
 UV := uv run --directory $(BACKEND)
 
 .PHONY: help install fmt lint typecheck test check test-live hooks api obs-smoke migrate migration seed test-db cost hotwords benchmark recordings prompts-lock eval eval-quick \
-	vps-deploy vps-env vps-ps vps-logs obs-up obs-down tunnel check-env fetch-livekit livekit
+	vps-deploy vps-env vps-ps vps-logs obs-up obs-down tunnel check-env fetch-livekit livekit \
+	web-lint web-typecheck web-test web-build web-dev web-check web-deps gen-types
 
 help:
 	@echo "install    安装依赖并安装 git hooks"
@@ -14,7 +15,12 @@ help:
 	@echo "lint       格式检查 + lint（不修改文件）"
 	@echo "typecheck  pyright 类型检查"
 	@echo "test       单元测试（不含 live 测试）"
-	@echo "check      lint + typecheck + test（合并前必须通过）"
+	@echo "check      后端检查 + web-check（合并前必须通过）"
+	@echo "web-check  前端 lint + typecheck + test（先安装 web 依赖）"
+	@echo "web-lint / web-typecheck / web-test  单独运行前端检查"
+	@echo "web-build  前端生产构建（CI 必跑）"
+	@echo "web-dev    启动前端（http://localhost:3000）"
+	@echo "gen-types  导出后端 OpenAPI 并生成前端类型（接口变更后运行）"
 	@echo "test-live  调用真实厂商的测试（需要 .env，手动运行）"
 	@echo "api        启动 API（http://127.0.0.1:8000，改代码自动重载；/readyz 需要隧道）"
 	@echo "migrate    把数据库迁移到最新版本（需要隧道）"
@@ -42,6 +48,7 @@ help:
 
 install:
 	uv sync --directory $(BACKEND)
+	pnpm --dir web install
 	$(UV) pre-commit install
 
 hooks:
@@ -61,7 +68,31 @@ typecheck:
 test:
 	$(UV) pytest
 
-check: lint typecheck test
+check: lint typecheck test web-check
+
+web-deps:
+	@test -d web/node_modules || { echo "先运行 pnpm --dir web install"; exit 1; }
+
+web-check: web-lint web-typecheck web-test
+
+web-lint: web-deps
+	pnpm --dir web run lint
+
+web-typecheck: web-deps
+	pnpm --dir web run typecheck
+
+web-test: web-deps
+	pnpm --dir web run test
+
+web-build: web-deps
+	pnpm --dir web run build
+
+web-dev: web-deps
+	pnpm --dir web run dev
+
+gen-types:
+	$(UV) python tools/export_openapi.py $(abspath web/openapi.json)
+	pnpm --dir web gen-types
 
 test-live:
 	$(UV) pytest -m live

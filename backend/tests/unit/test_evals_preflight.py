@@ -9,6 +9,7 @@ import pytest
 
 from evals import preflight
 from interview.config import ProvidersSettings
+from interview.observability import usage
 from interview.providers.base import ProviderUnavailable
 from interview.providers.fake import FakeLLM
 from interview.providers.registry import ProviderFactories, ProviderRegistry
@@ -19,6 +20,7 @@ def settings(**roles: Any) -> ProvidersSettings:
         "llm_front": {"provider": "fake", "model": "front"},
         "llm_eval": {"provider": "fake", "model": "eval"},
         "llm_live_eval": {"provider": "fake", "model": "live"},
+        "llm_report": {"provider": "", "model": ""},
         "llm_fallback": {"provider": "fake", "model": "backup"},
         "stt": {"provider": "fake", "model": "stt"},
         "tts": {"provider": "fake", "model": "tts"},
@@ -30,6 +32,12 @@ async def test_probe_reports_failing_roles_without_fallback(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     created: list[Any] = []
+
+    async def ignore_usage(**_kwargs: Any) -> None:
+        return None
+
+    # 本测试只检查探测与主备行为；用量落库会间接读取本机 .env（C12）。
+    monkeypatch.setattr(usage, "record_usage", ignore_usage)
 
     def factories(s: ProvidersSettings) -> ProviderFactories:
         def llm(role: Any) -> FakeLLM:

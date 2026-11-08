@@ -1,0 +1,1819 @@
+{
+  "components": {
+    "schemas": {
+      "Body_create_resume_api_resumes_post": {
+        "properties": {
+          "file": {
+            "contentMediaType": "application/octet-stream",
+            "title": "File",
+            "type": "string"
+          }
+        },
+        "required": [
+          "file"
+        ],
+        "title": "Body_create_resume_api_resumes_post",
+        "type": "object"
+      },
+      "CommandMessage": {
+        "properties": {
+          "command": {
+            "$ref": "#/components/schemas/CommandName"
+          },
+          "type": {
+            "const": "command",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "command"
+        ],
+        "title": "CommandMessage",
+        "type": "object"
+      },
+      "CommandName": {
+        "enum": [
+          "pause",
+          "resume",
+          "repeat",
+          "skip",
+          "end"
+        ],
+        "type": "string"
+      },
+      "Competency": {
+        "properties": {
+          "description": {
+            "description": "与岗位要求相关的能力描述",
+            "minLength": 1,
+            "title": "Description",
+            "type": "string"
+          },
+          "name": {
+            "description": "能力项名称",
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "probes": {
+            "description": "考察要点",
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "title": "Probes",
+            "type": "array"
+          },
+          "weight": {
+            "description": "相对权重",
+            "minimum": 0.0,
+            "title": "Weight",
+            "type": "number"
+          }
+        },
+        "required": [
+          "name",
+          "description",
+          "weight",
+          "probes"
+        ],
+        "title": "Competency",
+        "type": "object"
+      },
+      "CompetencyReview": {
+        "properties": {
+          "conclusion": {
+            "title": "Conclusion",
+            "type": "string"
+          },
+          "evidence": {
+            "items": {
+              "$ref": "#/components/schemas/EvidenceQuote"
+            },
+            "title": "Evidence",
+            "type": "array"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Score"
+          },
+          "weight": {
+            "title": "Weight",
+            "type": "number"
+          }
+        },
+        "required": [
+          "name",
+          "weight",
+          "score",
+          "conclusion",
+          "evidence"
+        ],
+        "title": "CompetencyReview",
+        "type": "object"
+      },
+      "EducationItem": {
+        "properties": {
+          "degree": {
+            "default": "",
+            "description": "学历",
+            "title": "Degree",
+            "type": "string"
+          },
+          "end": {
+            "default": "",
+            "description": "结束时间，保留简历原文",
+            "title": "End",
+            "type": "string"
+          },
+          "field": {
+            "default": "",
+            "description": "专业",
+            "title": "Field",
+            "type": "string"
+          },
+          "school": {
+            "description": "学校",
+            "minLength": 1,
+            "title": "School",
+            "type": "string"
+          },
+          "start": {
+            "default": "",
+            "description": "开始时间，保留简历原文",
+            "title": "Start",
+            "type": "string"
+          }
+        },
+        "required": [
+          "school"
+        ],
+        "title": "EducationItem",
+        "type": "object"
+      },
+      "EndedEvent": {
+        "properties": {
+          "type": {
+            "const": "ended",
+            "default": "ended",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "title": "EndedEvent",
+        "type": "object"
+      },
+      "ErrorEvent": {
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "trace_id": {
+            "title": "Trace Id",
+            "type": "string"
+          },
+          "type": {
+            "const": "error",
+            "default": "error",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "code",
+          "message",
+          "trace_id"
+        ],
+        "title": "ErrorEvent",
+        "type": "object"
+      },
+      "EvidenceQuote": {
+        "properties": {
+          "end_ms": {
+            "title": "End Ms",
+            "type": "integer"
+          },
+          "quote": {
+            "title": "Quote",
+            "type": "string"
+          },
+          "start_ms": {
+            "title": "Start Ms",
+            "type": "integer"
+          },
+          "turn_id": {
+            "format": "uuid",
+            "title": "Turn Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "turn_id",
+          "quote",
+          "start_ms",
+          "end_ms"
+        ],
+        "title": "EvidenceQuote",
+        "type": "object"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "title": "Detail",
+            "type": "array"
+          }
+        },
+        "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "InterviewCreate": {
+        "properties": {
+          "duration_min": {
+            "enum": [
+              15,
+              20,
+              30
+            ],
+            "title": "Duration Min",
+            "type": "integer"
+          },
+          "jd_text": {
+            "title": "Jd Text",
+            "type": "string"
+          },
+          "language": {
+            "$ref": "#/components/schemas/Language"
+          },
+          "resume_id": {
+            "format": "uuid",
+            "title": "Resume Id",
+            "type": "string"
+          },
+          "style": {
+            "$ref": "#/components/schemas/InterviewStyle"
+          },
+          "type": {
+            "$ref": "#/components/schemas/InterviewType"
+          }
+        },
+        "required": [
+          "resume_id",
+          "jd_text",
+          "type",
+          "style",
+          "language",
+          "duration_min"
+        ],
+        "title": "InterviewCreate",
+        "type": "object"
+      },
+      "InterviewOut": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "duration_min": {
+            "title": "Duration Min",
+            "type": "integer"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "language": {
+            "$ref": "#/components/schemas/Language"
+          },
+          "plan": {
+            "$ref": "#/components/schemas/PlanOut"
+          },
+          "resume_id": {
+            "format": "uuid",
+            "title": "Resume Id",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/InterviewStatus"
+          },
+          "style": {
+            "$ref": "#/components/schemas/InterviewStyle"
+          },
+          "type": {
+            "$ref": "#/components/schemas/InterviewType"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "resume_id",
+          "status",
+          "type",
+          "style",
+          "language",
+          "duration_min",
+          "created_at",
+          "updated_at",
+          "plan"
+        ],
+        "title": "InterviewOut",
+        "type": "object"
+      },
+      "InterviewStatus": {
+        "enum": [
+          "draft",
+          "planned",
+          "in_progress",
+          "completed",
+          "aborted",
+          "failed"
+        ],
+        "title": "InterviewStatus",
+        "type": "string"
+      },
+      "InterviewStyle": {
+        "enum": [
+          "gentle",
+          "pressure"
+        ],
+        "title": "InterviewStyle",
+        "type": "string"
+      },
+      "InterviewType": {
+        "enum": [
+          "technical",
+          "behavioral"
+        ],
+        "title": "InterviewType",
+        "type": "string"
+      },
+      "InterviewerDelta": {
+        "properties": {
+          "text": {
+            "title": "Text",
+            "type": "string"
+          },
+          "type": {
+            "const": "interviewer_delta",
+            "default": "interviewer_delta",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "text"
+        ],
+        "title": "InterviewerDelta",
+        "type": "object"
+      },
+      "InterviewerDone": {
+        "properties": {
+          "text": {
+            "title": "Text",
+            "type": "string"
+          },
+          "turn_id": {
+            "format": "uuid",
+            "title": "Turn Id",
+            "type": "string"
+          },
+          "type": {
+            "const": "interviewer_done",
+            "default": "interviewer_done",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "turn_id",
+          "text"
+        ],
+        "title": "InterviewerDone",
+        "type": "object"
+      },
+      "InterviewerSentence": {
+        "properties": {
+          "text": {
+            "title": "Text",
+            "type": "string"
+          },
+          "transition": {
+            "default": false,
+            "title": "Transition",
+            "type": "boolean"
+          },
+          "type": {
+            "const": "interviewer_sentence",
+            "default": "interviewer_sentence",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "text",
+          "transition"
+        ],
+        "title": "InterviewerSentence",
+        "type": "object"
+      },
+      "JDParsed": {
+        "properties": {
+          "competencies": {
+            "items": {
+              "$ref": "#/components/schemas/Competency"
+            },
+            "maxItems": 6,
+            "minItems": 3,
+            "title": "Competencies",
+            "type": "array"
+          },
+          "level": {
+            "description": "级别推断，无法判断时为空",
+            "title": "Level",
+            "type": "string"
+          },
+          "tech_terms": {
+            "description": "技术术语，最多 30 个，每个不超过 20 字符",
+            "items": {
+              "type": "string"
+            },
+            "title": "Tech Terms",
+            "type": "array"
+          },
+          "title": {
+            "description": "岗位名称，未注明时为空",
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "level",
+          "competencies",
+          "tech_terms"
+        ],
+        "title": "JDParsed",
+        "type": "object"
+      },
+      "JDText": {
+        "properties": {
+          "text": {
+            "description": "职位描述原文",
+            "maxLength": 10000,
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "title": "JDText",
+        "type": "object"
+      },
+      "Language": {
+        "enum": [
+          "zh",
+          "en"
+        ],
+        "title": "Language",
+        "type": "string"
+      },
+      "Phase": {
+        "enum": [
+          "opening",
+          "self_intro",
+          "resume_deep_dive",
+          "technical",
+          "behavioral",
+          "candidate_questions",
+          "closing",
+          "ended"
+        ],
+        "title": "Phase",
+        "type": "string"
+      },
+      "PingMessage": {
+        "properties": {
+          "type": {
+            "const": "ping",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "title": "PingMessage",
+        "type": "object"
+      },
+      "PlanCompetency": {
+        "description": "本场计划里的能力项。covered=False 表示容量不够，本场不覆盖。",
+        "properties": {
+          "covered": {
+            "title": "Covered",
+            "type": "boolean"
+          },
+          "description": {
+            "description": "与岗位要求相关的能力描述",
+            "minLength": 1,
+            "title": "Description",
+            "type": "string"
+          },
+          "name": {
+            "description": "能力项名称",
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "probes": {
+            "description": "考察要点",
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "title": "Probes",
+            "type": "array"
+          },
+          "weight": {
+            "description": "相对权重",
+            "minimum": 0.0,
+            "title": "Weight",
+            "type": "number"
+          }
+        },
+        "required": [
+          "name",
+          "description",
+          "weight",
+          "probes",
+          "covered"
+        ],
+        "title": "PlanCompetency",
+        "type": "object"
+      },
+      "PlanOut": {
+        "properties": {
+          "competencies": {
+            "items": {
+              "$ref": "#/components/schemas/PlanCompetency"
+            },
+            "title": "Competencies",
+            "type": "array"
+          },
+          "prompt_version": {
+            "title": "Prompt Version",
+            "type": "string"
+          },
+          "questions": {
+            "items": {
+              "$ref": "#/components/schemas/Question"
+            },
+            "title": "Questions",
+            "type": "array"
+          },
+          "stages": {
+            "items": {
+              "$ref": "#/components/schemas/StageSlot"
+            },
+            "title": "Stages",
+            "type": "array"
+          },
+          "tech_terms": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Tech Terms",
+            "type": "array"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "stages",
+          "competencies",
+          "questions",
+          "tech_terms",
+          "prompt_version",
+          "updated_at"
+        ],
+        "title": "PlanOut",
+        "type": "object"
+      },
+      "PlanUpdate": {
+        "description": "整份替换 questions 的请求体。",
+        "properties": {
+          "questions": {
+            "items": {
+              "$ref": "#/components/schemas/QuestionEdit"
+            },
+            "title": "Questions",
+            "type": "array"
+          }
+        },
+        "required": [
+          "questions"
+        ],
+        "title": "PlanUpdate",
+        "type": "object"
+      },
+      "PongEvent": {
+        "properties": {
+          "type": {
+            "const": "pong",
+            "default": "pong",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "title": "PongEvent",
+        "type": "object"
+      },
+      "ProjectItem": {
+        "properties": {
+          "highlights": {
+            "description": "项目亮点",
+            "items": {
+              "type": "string"
+            },
+            "title": "Highlights",
+            "type": "array"
+          },
+          "name": {
+            "description": "项目名称",
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "role": {
+            "default": "",
+            "description": "本人在项目中的角色，未注明时为空",
+            "title": "Role",
+            "type": "string"
+          },
+          "tech_stack": {
+            "description": "技术栈",
+            "items": {
+              "type": "string"
+            },
+            "title": "Tech Stack",
+            "type": "array"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "ProjectItem",
+        "type": "object"
+      },
+      "Question": {
+        "description": "计划里保存的题目。",
+        "properties": {
+          "competency": {
+            "minLength": 1,
+            "title": "Competency",
+            "type": "string"
+          },
+          "follow_ups": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 3,
+            "minItems": 2,
+            "title": "Follow Ups",
+            "type": "array"
+          },
+          "id": {
+            "pattern": "^q[1-9]\\d*$",
+            "title": "Id",
+            "type": "string"
+          },
+          "key_points": {
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "title": "Key Points",
+            "type": "array"
+          },
+          "project": {
+            "default": "",
+            "title": "Project",
+            "type": "string"
+          },
+          "stage": {
+            "$ref": "#/components/schemas/Stage"
+          },
+          "text": {
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "stage",
+          "competency",
+          "text",
+          "key_points",
+          "follow_ups",
+          "id"
+        ],
+        "title": "Question",
+        "type": "object"
+      },
+      "QuestionEdit": {
+        "description": "PATCH 时可修改的字段；stage、competency、project 即使传了也忽略，从已存题目取。",
+        "properties": {
+          "follow_ups": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 3,
+            "minItems": 2,
+            "title": "Follow Ups",
+            "type": "array"
+          },
+          "id": {
+            "minLength": 1,
+            "title": "Id",
+            "type": "string"
+          },
+          "key_points": {
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "title": "Key Points",
+            "type": "array"
+          },
+          "text": {
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "text",
+          "key_points",
+          "follow_ups"
+        ],
+        "title": "QuestionEdit",
+        "type": "object"
+      },
+      "QuestionReview": {
+        "properties": {
+          "asked": {
+            "title": "Asked",
+            "type": "boolean"
+          },
+          "competency": {
+            "title": "Competency",
+            "type": "string"
+          },
+          "evidence": {
+            "items": {
+              "$ref": "#/components/schemas/EvidenceQuote"
+            },
+            "title": "Evidence",
+            "type": "array"
+          },
+          "improved_answer": {
+            "default": "",
+            "title": "Improved Answer",
+            "type": "string"
+          },
+          "missing_points": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Missing Points",
+            "type": "array"
+          },
+          "question": {
+            "title": "Question",
+            "type": "string"
+          },
+          "question_id": {
+            "title": "Question Id",
+            "type": "string"
+          },
+          "score": {
+            "anyOf": [
+              {
+                "maximum": 5.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Score"
+          },
+          "strengths": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Strengths",
+            "type": "array"
+          },
+          "summary": {
+            "default": "",
+            "title": "Summary",
+            "type": "string"
+          }
+        },
+        "required": [
+          "question_id",
+          "question",
+          "competency",
+          "asked"
+        ],
+        "title": "QuestionReview",
+        "type": "object"
+      },
+      "ReportBody": {
+        "properties": {
+          "competencies": {
+            "items": {
+              "$ref": "#/components/schemas/CompetencyReview"
+            },
+            "title": "Competencies",
+            "type": "array"
+          },
+          "degraded": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Degraded",
+            "type": "array"
+          },
+          "disclaimer": {
+            "default": "AI 生成，仅供练习参考，不代表任何企业的录用判断。",
+            "title": "Disclaimer",
+            "type": "string"
+          },
+          "overall": {
+            "title": "Overall",
+            "type": "string"
+          },
+          "overall_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Overall Score"
+          },
+          "questions": {
+            "items": {
+              "$ref": "#/components/schemas/QuestionReview"
+            },
+            "title": "Questions",
+            "type": "array"
+          },
+          "schema_version": {
+            "const": 1,
+            "default": 1,
+            "title": "Schema Version",
+            "type": "integer"
+          },
+          "top_improvements": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Top Improvements",
+            "type": "array"
+          }
+        },
+        "required": [
+          "overall_score",
+          "overall",
+          "top_improvements",
+          "competencies",
+          "questions",
+          "degraded"
+        ],
+        "title": "ReportBody",
+        "type": "object"
+      },
+      "ReportOut": {
+        "properties": {
+          "disclaimer": {
+            "default": "AI 生成，仅供练习参考，不代表任何企业的录用判断。",
+            "title": "Disclaimer",
+            "type": "string"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "generated_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Generated At"
+          },
+          "interview_id": {
+            "format": "uuid",
+            "title": "Interview Id",
+            "type": "string"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          },
+          "prompt_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Prompt Version"
+          },
+          "report": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReportBody"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "status": {
+            "$ref": "#/components/schemas/ReportStatus"
+          }
+        },
+        "required": [
+          "interview_id",
+          "status",
+          "generated_at",
+          "model",
+          "prompt_version",
+          "report",
+          "error"
+        ],
+        "title": "ReportOut",
+        "type": "object"
+      },
+      "ReportStatus": {
+        "enum": [
+          "pending",
+          "ready",
+          "failed"
+        ],
+        "title": "ReportStatus",
+        "type": "string"
+      },
+      "ResumeOut": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "parsed": {
+            "$ref": "#/components/schemas/ResumeParsed"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "parsed",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "ResumeOut",
+        "type": "object"
+      },
+      "ResumeParsed": {
+        "description": "解析后的简历。没有手机号、邮箱、地址等字段。",
+        "properties": {
+          "education": {
+            "description": "教育经历",
+            "items": {
+              "$ref": "#/components/schemas/EducationItem"
+            },
+            "title": "Education",
+            "type": "array"
+          },
+          "name": {
+            "default": "",
+            "description": "候选人姓名",
+            "title": "Name",
+            "type": "string"
+          },
+          "projects": {
+            "description": "项目经历",
+            "items": {
+              "$ref": "#/components/schemas/ProjectItem"
+            },
+            "title": "Projects",
+            "type": "array"
+          },
+          "skills": {
+            "description": "技能",
+            "items": {
+              "type": "string"
+            },
+            "title": "Skills",
+            "type": "array"
+          },
+          "work": {
+            "description": "工作经历",
+            "items": {
+              "$ref": "#/components/schemas/WorkItem"
+            },
+            "title": "Work",
+            "type": "array"
+          }
+        },
+        "title": "ResumeParsed",
+        "type": "object"
+      },
+      "ResumeReplacement": {
+        "description": "整份替换解析结果。每个字段都要出现，缺字段不能靠默认值把已有内容清空。",
+        "properties": {
+          "education": {
+            "items": {
+              "$ref": "#/components/schemas/EducationItem"
+            },
+            "title": "Education",
+            "type": "array"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "projects": {
+            "items": {
+              "$ref": "#/components/schemas/ProjectItem"
+            },
+            "title": "Projects",
+            "type": "array"
+          },
+          "skills": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Skills",
+            "type": "array"
+          },
+          "work": {
+            "items": {
+              "$ref": "#/components/schemas/WorkItem"
+            },
+            "title": "Work",
+            "type": "array"
+          }
+        },
+        "required": [
+          "name",
+          "work",
+          "projects",
+          "skills",
+          "education"
+        ],
+        "title": "ResumeReplacement",
+        "type": "object"
+      },
+      "Stage": {
+        "description": "与 PR-16 状态机的阶段名一致。",
+        "enum": [
+          "opening",
+          "self_intro",
+          "resume_deep_dive",
+          "technical",
+          "behavioral",
+          "candidate_questions",
+          "closing"
+        ],
+        "title": "Stage",
+        "type": "string"
+      },
+      "StageEvent": {
+        "properties": {
+          "phase": {
+            "$ref": "#/components/schemas/Phase"
+          },
+          "remaining_s": {
+            "title": "Remaining S",
+            "type": "integer"
+          },
+          "total_remaining_s": {
+            "title": "Total Remaining S",
+            "type": "integer"
+          },
+          "type": {
+            "const": "stage",
+            "default": "stage",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "phase",
+          "remaining_s",
+          "total_remaining_s"
+        ],
+        "title": "StageEvent",
+        "type": "object"
+      },
+      "StageSlot": {
+        "description": "一个阶段的时间片。capacity 是无题阶段为 0，有题阶段为 seconds // SECONDS_PER_QUESTION。",
+        "properties": {
+          "capacity": {
+            "minimum": 0.0,
+            "title": "Capacity",
+            "type": "integer"
+          },
+          "seconds": {
+            "minimum": 0.0,
+            "title": "Seconds",
+            "type": "integer"
+          },
+          "stage": {
+            "$ref": "#/components/schemas/Stage"
+          }
+        },
+        "required": [
+          "stage",
+          "seconds",
+          "capacity"
+        ],
+        "title": "StageSlot",
+        "type": "object"
+      },
+      "StateEvent": {
+        "properties": {
+          "type": {
+            "const": "state",
+            "default": "state",
+            "title": "Type",
+            "type": "string"
+          },
+          "value": {
+            "enum": [
+              "listening",
+              "thinking",
+              "speaking",
+              "paused"
+            ],
+            "title": "Value",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "value"
+        ],
+        "title": "StateEvent",
+        "type": "object"
+      },
+      "TextClientMessage": {
+        "discriminator": {
+          "mapping": {
+            "command": "#/components/schemas/CommandMessage",
+            "ping": "#/components/schemas/PingMessage",
+            "user_text": "#/components/schemas/UserTextMessage"
+          },
+          "propertyName": "type"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/UserTextMessage"
+          },
+          {
+            "$ref": "#/components/schemas/CommandMessage"
+          },
+          {
+            "$ref": "#/components/schemas/PingMessage"
+          }
+        ]
+      },
+      "TextServerMessage": {
+        "discriminator": {
+          "mapping": {
+            "ended": "#/components/schemas/EndedEvent",
+            "error": "#/components/schemas/ErrorEvent",
+            "interviewer_delta": "#/components/schemas/InterviewerDelta",
+            "interviewer_done": "#/components/schemas/InterviewerDone",
+            "interviewer_sentence": "#/components/schemas/InterviewerSentence",
+            "pong": "#/components/schemas/PongEvent",
+            "stage": "#/components/schemas/StageEvent",
+            "state": "#/components/schemas/StateEvent"
+          },
+          "propertyName": "type"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/InterviewerDelta"
+          },
+          {
+            "$ref": "#/components/schemas/InterviewerSentence"
+          },
+          {
+            "$ref": "#/components/schemas/InterviewerDone"
+          },
+          {
+            "$ref": "#/components/schemas/StateEvent"
+          },
+          {
+            "$ref": "#/components/schemas/StageEvent"
+          },
+          {
+            "$ref": "#/components/schemas/EndedEvent"
+          },
+          {
+            "$ref": "#/components/schemas/PongEvent"
+          },
+          {
+            "$ref": "#/components/schemas/ErrorEvent"
+          }
+        ]
+      },
+      "UserTextMessage": {
+        "properties": {
+          "text": {
+            "maxLength": 4000,
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          },
+          "type": {
+            "const": "user_text",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "text"
+        ],
+        "title": "UserTextMessage",
+        "type": "object"
+      },
+      "ValidationError": {
+        "properties": {
+          "ctx": {
+            "title": "Context",
+            "type": "object"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Location",
+            "type": "array"
+          },
+          "msg": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "title": "Error Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError",
+        "type": "object"
+      },
+      "WorkItem": {
+        "properties": {
+          "company": {
+            "description": "公司或组织名称",
+            "minLength": 1,
+            "title": "Company",
+            "type": "string"
+          },
+          "end": {
+            "default": "",
+            "description": "结束时间，保留简历原文；在职可写至今",
+            "title": "End",
+            "type": "string"
+          },
+          "highlights": {
+            "description": "与工作相关的要点",
+            "items": {
+              "type": "string"
+            },
+            "title": "Highlights",
+            "type": "array"
+          },
+          "start": {
+            "default": "",
+            "description": "开始时间，保留简历原文",
+            "title": "Start",
+            "type": "string"
+          },
+          "title": {
+            "description": "职位",
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "company",
+          "title"
+        ],
+        "title": "WorkItem",
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "title": "Interview Agent API",
+    "version": "0.1.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/api/interviews": {
+      "post": {
+        "operationId": "create_interview_api_interviews_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InterviewCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InterviewOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Interview",
+        "tags": [
+          "interviews"
+        ]
+      }
+    },
+    "/api/interviews/{interview_id}/plan": {
+      "get": {
+        "operationId": "get_plan_api_interviews__interview_id__plan_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "interview_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Interview Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlanOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Plan",
+        "tags": [
+          "interviews"
+        ]
+      },
+      "patch": {
+        "operationId": "update_plan_api_interviews__interview_id__plan_patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "interview_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Interview Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PlanUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlanOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Plan",
+        "tags": [
+          "interviews"
+        ]
+      }
+    },
+    "/api/interviews/{interview_id}/report": {
+      "get": {
+        "operationId": "get_report_api_interviews__interview_id__report_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "interview_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Interview Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReportOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Report",
+        "tags": [
+          "interviews"
+        ]
+      },
+      "post": {
+        "operationId": "create_report_api_interviews__interview_id__report_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "interview_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Interview Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReportOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Report",
+        "tags": [
+          "interviews"
+        ]
+      }
+    },
+    "/api/jd/parse": {
+      "post": {
+        "operationId": "parse_jd_route_api_jd_parse_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/JDText"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JDParsed"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Parse Jd Route",
+        "tags": [
+          "jd"
+        ]
+      }
+    },
+    "/api/resumes": {
+      "post": {
+        "operationId": "create_resume_api_resumes_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_create_resume_api_resumes_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResumeOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Resume",
+        "tags": [
+          "resumes"
+        ]
+      }
+    },
+    "/api/resumes/{resume_id}": {
+      "get": {
+        "operationId": "get_resume_api_resumes__resume_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "resume_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Resume Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResumeOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Resume",
+        "tags": [
+          "resumes"
+        ]
+      },
+      "patch": {
+        "operationId": "update_resume_api_resumes__resume_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "resume_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Resume Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResumeReplacement"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResumeOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Resume",
+        "tags": [
+          "resumes"
+        ]
+      }
+    }
+  }
+}
