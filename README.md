@@ -65,6 +65,24 @@ make api   # http://127.0.0.1:8000，改代码自动重载；接口文档在 /do
 需要隧道已建立、已 `make migrate` 和 `make seed`，并在 `.env` 里配置好评估模型（`LLM_EVAL_*`）。只想联调接口、不调用真实厂商时，可以设 `LLM_EVAL_PROVIDER=fake`。
 API 只监听 127.0.0.1，v0 没有登录，所有请求都视为 `DEFAULT_USER_ID` 这个本地用户，不要直接暴露到公网。
 
+### 前端准备流程
+
+需要 Node.js >= 22、pnpm 10.33.0。先建立隧道，完成 `make migrate`、`make seed` 并配置模型：
+
+```bash
+pnpm --dir web install
+make tunnel   # 独立终端保持运行
+make api      # 另一个终端；需要隧道和 make seed
+make web-dev  # 再开一个终端
+```
+
+打开 [http://localhost:3000](http://localhost:3000)，进入简历上传、JD 预览和面试设置流程，生成后可预览修改计划。文字面试页目前为占位页。
+浏览器直接请求 `http://127.0.0.1:8000`；换地址时复制 `web/.env.example` 为 `web/.env.local`，并在根目录 `.env` 的 `WEB_ORIGINS` 放行前端地址。
+`/new` 的中间步骤只保存在内存，刷新会清空；生成后的计划可通过 URL 重新打开。
+JD 预览和创建面试各自解析一次 JD，会重复消耗时间及模型费用；失败后由用户手动重试。
+
+接口变更后先运行 `make gen-types`，同步 `web/openapi.json` 与 `web/src/lib/api/schema.d.ts`。`make check` 包含前端 lint、类型与单元测试；`make web-build` 单独验证生产构建，CI 也会执行构建。
+
 ### 可观测性（Langfuse、Prometheus、Grafana）
 
 都放在 compose 的 `observability` profile 里，可以单独启停，不影响核心服务。
