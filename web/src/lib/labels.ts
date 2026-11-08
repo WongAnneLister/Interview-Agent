@@ -30,3 +30,8 @@ export const phaseLabels = {
   ...stageLabels,
   ended: "已结束",
 } satisfies Record<Schemas["Phase"], string>;
+
+export const turnRoleLabels = {
+  interviewer: "面试官",
+  candidate: "候选人",
+} satisfies Record<Schemas["TurnRole"], string>;
