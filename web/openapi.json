@@ -1309,6 +1309,86 @@
           }
         ]
       },
+      "TranscriptOut": {
+        "properties": {
+          "interview_id": {
+            "format": "uuid",
+            "title": "Interview Id",
+            "type": "string"
+          },
+          "turns": {
+            "items": {
+              "$ref": "#/components/schemas/TranscriptTurnOut"
+            },
+            "title": "Turns",
+            "type": "array"
+          }
+        },
+        "required": [
+          "interview_id",
+          "turns"
+        ],
+        "title": "TranscriptOut",
+        "type": "object"
+      },
+      "TranscriptTurnOut": {
+        "properties": {
+          "end_ms": {
+            "title": "End Ms",
+            "type": "integer"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "question_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Question Id"
+          },
+          "role": {
+            "$ref": "#/components/schemas/TurnRole"
+          },
+          "seq": {
+            "title": "Seq",
+            "type": "integer"
+          },
+          "start_ms": {
+            "title": "Start Ms",
+            "type": "integer"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "seq",
+          "role",
+          "text",
+          "start_ms",
+          "end_ms",
+          "question_id"
+        ],
+        "title": "TranscriptTurnOut",
+        "type": "object"
+      },
+      "TurnRole": {
+        "enum": [
+          "interviewer",
+          "candidate"
+        ],
+        "title": "TurnRole",
+        "type": "string"
+      },
       "UserTextMessage": {
         "properties": {
           "text": {
@@ -1634,6 +1714,49 @@
           }
         },
         "summary": "Create Report",
+        "tags": [
+          "interviews"
+        ]
+      }
+    },
+    "/api/interviews/{interview_id}/transcript": {
+      "get": {
+        "operationId": "get_transcript_api_interviews__interview_id__transcript_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "interview_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Interview Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TranscriptOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Transcript",
         "tags": [
           "interviews"
         ]

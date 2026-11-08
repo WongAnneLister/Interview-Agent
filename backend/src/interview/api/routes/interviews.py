@@ -35,10 +35,13 @@ from interview.db.models import (
     Plan,
     Report,
     ReportStatus,
+    Turn,
+    TurnRole,
     UsageRole,
 )
 from interview.domain.interview_setup import InterviewSettings, build_plan, persist_interview
 from interview.domain.jd import JDText
+from interview.domain.orchestrator_store import TurnRepository
 from interview.domain.plan import (
     InterviewRepository,
     PlanCompetency,
@@ -107,6 +110,40 @@ class ReportOut(BaseModel):
     report: ReportBody | None
     error: str | None
     disclaimer: str = REPORT_DISCLAIMER
+
+
+class TranscriptTurnOut(BaseModel):
+    id: uuid.UUID
+    seq: int
+    role: TurnRole
+    text: str
+    start_ms: int
+    end_ms: int
+    question_id: str | None
+
+
+class TranscriptOut(BaseModel):
+    interview_id: uuid.UUID
+    turns: list[TranscriptTurnOut]
+
+
+@router.get("/{interview_id}/transcript")
+async def get_transcript(
+    interview_id: uuid.UUID, user_id: CurrentUserId, session: DbSession
+) -> TranscriptOut:
+    interview = await _owned_interview(session, user_id, interview_id)
+    if interview.status not in {InterviewStatus.COMPLETED, InterviewStatus.ABORTED}:
+        raise ConflictError("面试结束后才可查看转写")
+    rows = await session.scalars(
+        TurnRepository(session, user_id)
+        .select()
+        .where(Turn.interview_id == interview_id)
+        .order_by(Turn.seq)
+    )
+    return TranscriptOut(
+        interview_id=interview_id,
+        turns=[TranscriptTurnOut.model_validate(turn, from_attributes=True) for turn in rows],
+    )
 
 
 def _report_view(row: Report, total_timeout_s: float) -> ReportOut:

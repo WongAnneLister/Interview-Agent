@@ -57,6 +57,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/interviews/{interview_id}/transcript": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Transcript */
+        get: operations["get_transcript_api_interviews__interview_id__transcript_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/jd/parse": {
         parameters: {
             query?: never;
@@ -704,6 +721,40 @@ export interface components {
         };
         TextClientMessage: components["schemas"]["UserTextMessage"] | components["schemas"]["CommandMessage"] | components["schemas"]["PingMessage"];
         TextServerMessage: components["schemas"]["InterviewerDelta"] | components["schemas"]["InterviewerSentence"] | components["schemas"]["InterviewerDone"] | components["schemas"]["StateEvent"] | components["schemas"]["StageEvent"] | components["schemas"]["EndedEvent"] | components["schemas"]["PongEvent"] | components["schemas"]["ErrorEvent"];
+        /** TranscriptOut */
+        TranscriptOut: {
+            /**
+             * Interview Id
+             * Format: uuid
+             */
+            interview_id: string;
+            /** Turns */
+            turns: components["schemas"]["TranscriptTurnOut"][];
+        };
+        /** TranscriptTurnOut */
+        TranscriptTurnOut: {
+            /** End Ms */
+            end_ms: number;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Question Id */
+            question_id: string | null;
+            role: components["schemas"]["TurnRole"];
+            /** Seq */
+            seq: number;
+            /** Start Ms */
+            start_ms: number;
+            /** Text */
+            text: string;
+        };
+        /**
+         * TurnRole
+         * @enum {string}
+         */
+        TurnRole: "interviewer" | "candidate";
         /** UserTextMessage */
         UserTextMessage: {
             /** Text */
@@ -914,6 +965,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ReportOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_transcript_api_interviews__interview_id__transcript_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                interview_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TranscriptOut"];
                 };
             };
             /** @description Validation Error */

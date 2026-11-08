@@ -118,3 +118,30 @@ export function updatePlan(
     }),
   );
 }
+
+export function getReport(id: string, signal?: AbortSignal) {
+  return request(TIMEOUT_MS.standard, signal, combined =>
+    client.GET("/api/interviews/{interview_id}/report", {
+      params: { path: { interview_id: id } },
+      signal: combined,
+    }),
+  );
+}
+
+export function regenerateReport(id: string, signal?: AbortSignal) {
+  return request(TIMEOUT_MS.standard, signal, combined =>
+    client.POST("/api/interviews/{interview_id}/report", {
+      params: { path: { interview_id: id } },
+      signal: combined,
+    }),
+  );
+}
+
+export function getTranscript(id: string, signal?: AbortSignal) {
+  return request(TIMEOUT_MS.standard, signal, combined =>
+    client.GET("/api/interviews/{interview_id}/transcript", {
+      params: { path: { interview_id: id } },
+      signal: combined,
+    }),
+  );
+}

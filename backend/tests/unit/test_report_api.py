@@ -22,10 +22,21 @@ from interview.api.deps import routes_without_user
 from interview.api.resources import Resources, create_resources
 from interview.api.routes import text_ws
 from interview.config import Settings
-from interview.db.models import Interview, InterviewStatus, Plan, Report, ReportStatus, Resume, User
+from interview.db.models import (
+    Interview,
+    InterviewStatus,
+    Plan,
+    Report,
+    ReportStatus,
+    Resume,
+    Turn,
+    TurnRole,
+    User,
+)
 from interview.db.repository import UserScopedRepository
 from interview.db.session import make_sessionmaker
 from interview.domain.orchestrator import InterviewOrchestrator
+from interview.domain.orchestrator_store import TurnRepository
 from interview.domain.plan import InterviewRepository
 from interview.providers.registry import ProviderRegistry
 
@@ -105,7 +116,7 @@ class Api:
 async def api() -> AsyncIterator[Api]:
     engine = create_async_engine("sqlite+aiosqlite://", poolclass=StaticPool)
     async with engine.begin() as conn:
-        await create_tables(conn, User, Resume, Interview, Plan, Report)
+        await create_tables(conn, User, Resume, Interview, Plan, Report, Turn)
     sm = make_sessionmaker(engine)
     await seed(sm, make_plan())
     settings = make_settings(user=USER)
@@ -134,6 +145,114 @@ async def test_get_report_status(api: Api, status: ReportStatus) -> None:
     assert body["report"] == (BODY if status == ReportStatus.READY else None)
     assert body["error"] == ("ReportTimeout" if status == ReportStatus.FAILED else None)
     assert bool(body["generated_at"]) == (status == ReportStatus.READY)
+
+
+@pytest.mark.parametrize("status", [InterviewStatus.COMPLETED, InterviewStatus.ABORTED])
+async def test_transcript_returns_ordered_fields_for_this_interview(
+    api: Api, status: InterviewStatus
+) -> None:
+    await api.status(status)
+    turns = [
+        Turn(
+            id=uuid.uuid4(),
+            interview_id=INTERVIEW_ID,
+            user_id=USER,
+            seq=seq,
+            role=role,
+            text=text,
+            start_ms=seq * 100,
+            end_ms=seq * 100 + 90,
+            question_id=question,
+        )
+        for seq, role, text, question in [
+            (2, TurnRole.CANDIDATE, "我的回答", "q1"),
+            (1, TurnRole.INTERVIEWER, "开场", None),
+        ]
+    ]
+    async with api.sessionmaker() as session:
+        original = await InterviewRepository(session, USER).get(INTERVIEW_ID)
+        assert original is not None
+        other_id = uuid.uuid4()
+        InterviewRepository(session, USER).add(
+            Interview(
+                id=other_id,
+                user_id=USER,
+                resume_id=original.resume_id,
+                jd_text="另一次面试",
+                type=original.type,
+                style=original.style,
+                language=original.language,
+                duration_min=20,
+                status=status,
+            )
+        )
+        for turn in turns:
+            TurnRepository(session, USER).add(turn)
+        TurnRepository(session, USER).add(
+            Turn(
+                id=uuid.uuid4(),
+                interview_id=other_id,
+                user_id=USER,
+                seq=1,
+                role=TurnRole.CANDIDATE,
+                text="不应返回",
+                start_ms=0,
+                end_ms=10,
+            )
+        )
+        await session.commit()
+    response = await api.client.get(f"/api/interviews/{INTERVIEW_ID}/transcript")
+    assert response.status_code == 200
+    assert response.json() == {
+        "interview_id": str(INTERVIEW_ID),
+        "turns": [
+            {
+                "id": str(turn.id),
+                "seq": turn.seq,
+                "role": turn.role.value,
+                "text": turn.text,
+                "start_ms": turn.start_ms,
+                "end_ms": turn.end_ms,
+                "question_id": turn.question_id,
+            }
+            for turn in reversed(turns)
+        ],
+    }
+
+
+@pytest.mark.parametrize("other_user", [False, True])
+async def test_transcript_missing_or_other_user_is_404(api: Api, other_user: bool) -> None:
+    interview_id = INTERVIEW_ID if other_user else uuid.uuid4()
+    if other_user:
+        api.settings.app.default_user_id = uuid.uuid4()
+    response = await api.client.get(f"/api/interviews/{interview_id}/transcript")
+    assert response.status_code == 404
+    assert error_of(response)["message"] == "面试不存在"
+
+
+@pytest.mark.parametrize(
+    "status",
+    [
+        s
+        for s in InterviewStatus
+        if s
+        not in {
+            InterviewStatus.COMPLETED,
+            InterviewStatus.ABORTED,
+        }
+    ],
+)
+async def test_transcript_requires_ended_interview(api: Api, status: InterviewStatus) -> None:
+    await api.status(status)
+    response = await api.client.get(f"/api/interviews/{INTERVIEW_ID}/transcript")
+    assert response.status_code == 409
+    assert error_of(response)["message"] == "面试结束后才可查看转写"
+
+
+async def test_transcript_without_turns_is_empty(api: Api) -> None:
+    response = await api.client.get(f"/api/interviews/{INTERVIEW_ID}/transcript")
+    assert response.status_code == 200
+    assert response.json() == {"interview_id": str(INTERVIEW_ID), "turns": []}
 
 
 async def test_get_missing_or_unfinished_report(api: Api) -> None:

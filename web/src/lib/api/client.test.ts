@@ -2,6 +2,9 @@ import { afterEach, expect, it, vi } from "vitest";
 import {
   createInterview,
   getPlan,
+  getReport,
+  regenerateReport,
+  getTranscript,
   getResume,
   parseJd,
   TIMEOUT_MS,
@@ -85,4 +88,25 @@ it("调用方取消信号传到请求，并转换为 aborted", async () => {
   const result = getPlan("id", caller.signal);
   caller.abort();
   await expect(result).rejects.toMatchObject({ status: null, code: "aborted" });
+});
+
+it("报告和转写请求使用标准超时及正确方法和路径", async () => {
+  const timeout = vi.spyOn(AbortSignal, "timeout");
+  const calls: string[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (request: Request) => {
+      calls.push(`${request.method} ${new URL(request.url).pathname}`);
+      return Response.json({});
+    }),
+  );
+  await getReport("id");
+  await regenerateReport("id");
+  await getTranscript("id");
+  expect(calls).toEqual([
+    "GET /api/interviews/id/report",
+    "POST /api/interviews/id/report",
+    "GET /api/interviews/id/transcript",
+  ]);
+  expect(timeout.mock.calls.map(call => call[0])).toEqual(Array(3).fill(TIMEOUT_MS.standard));
 });
