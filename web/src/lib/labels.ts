@@ -26,3 +26,7 @@ export const stageLabels = {
   candidate_questions: "候选人提问",
   closing: "收尾",
 } satisfies Record<Schemas["Stage"], string>;
+export const phaseLabels = {
+  ...stageLabels,
+  ended: "已结束",
+} satisfies Record<Schemas["Phase"], string>;
