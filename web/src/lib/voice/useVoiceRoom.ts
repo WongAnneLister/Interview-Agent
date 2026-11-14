@@ -29,15 +29,21 @@ const CAPTURE = {
   autoGainControl: true,
 } as const;
 
-// 把麦克风从“default”固定到当前那个具体设备：livekit-client 在系统默认输入变化时会跟着切
-// （macOS 连续互通会在面试中途把 iPhone 设成默认，PR-30 实测）。固定失败不影响通话。
-async function pinMicrophone(room: Room): Promise<void> {
+// 麦克风用具体设备而不是“default”：livekit-client 在系统默认输入变化时会把 default 上的音轨
+// 切到新设备（macOS 连续互通会在面试中途把 iPhone 设成默认，PR-30 实测）。发布时它记下的是
+// 音轨实际用的设备，所以在发布之前就用具体设备建音轨，之后不会跟着切，也不用重启已发布的音轨
+// （上一版发布后再 switchActiveDevice，重启音轨后识别几乎收不到声音，PR-30 实测）。
+async function openMicrophone(): Promise<LocalAudioTrack> {
+  const track = await createLocalAudioTrack(CAPTURE); // 先拿到权限，设备列表才有名称和分组
   try {
-    const devices = await Room.getLocalDevices("audioinput", false);
+    const devices = await navigator.mediaDevices.enumerateDevices();
     const deviceId = concreteInputId(devices);
-    if (deviceId) await room.switchActiveDevice("audioinput", deviceId, true);
+    if (!deviceId || track.mediaStreamTrack.getSettings().deviceId === deviceId) return track;
+    const pinned = await createLocalAudioTrack({ ...CAPTURE, deviceId: { exact: deviceId } });
+    track.stop();
+    return pinned;
   } catch {
-    /* 继续用默认设备 */
+    return track; // 固定失败时继续用默认设备
   }
 }
 
@@ -75,7 +81,7 @@ export function useVoiceRoom(id: string) {
   const acquireMic = useCallback(async (): Promise<LocalAudioTrack> => {
     if (micRef.current) return micRef.current;
     if (!mediaAvailable()) throw failure("insecure");
-    const track = await createLocalAudioTrack(CAPTURE);
+    const track = await openMicrophone();
     micRef.current = track;
     setMic(track);
     return track;
@@ -156,8 +162,6 @@ export function useVoiceRoom(id: string) {
       await next.localParticipant.publishTrack(track, {
         source: Track.Source.Microphone,
       });
-      if (stale()) return;
-      await pinMicrophone(next);
       if (stale()) return;
       setCanPlayAudio(next.canPlaybackAudio);
       setPeers(next.remoteParticipants.size);
