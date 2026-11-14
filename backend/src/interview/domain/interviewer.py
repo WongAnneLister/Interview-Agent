@@ -236,11 +236,12 @@ TRANSITIONS: Mapping[Language, Mapping[InterviewStyle, tuple[str, ...]]] = {
             "好的，谢谢。",
             "嗯。",
         ),
-        InterviewStyle.PRESSURE: ("好。", "嗯。", "明白。", "了解。", "行。", "继续。"),
+        # 只放中性的确认语：“继续。”这类带指令的话接在“换下一题”前面会自相矛盾（PR-29 实测）
+        InterviewStyle.PRESSURE: ("好。", "嗯。", "明白。", "了解。", "行。", "知道了。"),
     },
     Language.EN: {
         InterviewStyle.GENTLE: ("I see.", "Okay.", "Got it.", "Thanks.", "Right.", "Mm-hmm."),
-        InterviewStyle.PRESSURE: ("Okay.", "Right.", "Got it.", "Noted.", "Fine.", "Go on."),
+        InterviewStyle.PRESSURE: ("Okay.", "Right.", "Got it.", "Noted.", "Fine.", "Understood."),
     },
 }
 

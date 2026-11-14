@@ -522,3 +522,11 @@ def test_system_prompt_requires_handing_back_the_turn() -> None:
     )
     assert "把话轮交还候选人" in prompt.messages[0]["content"]
     assert prompt.version == 2
+
+
+def test_transitions_are_neutral_acknowledgements() -> None:
+    # 过渡语接在追问、换题、收尾前面都要通顺：不能带“继续说”这类指令
+    # （PR-29 实测说出了 “Go on. Let's move on.”）
+    for styles in TRANSITIONS.values():
+        for lines in styles.values():
+            assert not {"Go on.", "Keep going.", "继续。", "继续说。"} & set(lines)
