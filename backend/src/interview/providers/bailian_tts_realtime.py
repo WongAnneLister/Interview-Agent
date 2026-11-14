@@ -227,9 +227,10 @@ class BailianTTSRealtime:
                 stream.mark_start()
                 pending += chunk
                 ready, pending = split_sentence(pending)
-                if ready:
+                if ready.strip():  # 换行也算句末，切出来的可能只有空白
                     await self._commit(conn, ready, state)
-            if pending:
+            # 只剩空白时不提交：服务端对没有文字的 commit 返回 400，整段合成随之失败（英文句间空格）
+            if pending.strip():
                 await self._commit(conn, pending, state)
 
         sender = asyncio.create_task(send_text())

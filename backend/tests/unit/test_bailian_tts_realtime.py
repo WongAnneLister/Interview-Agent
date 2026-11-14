@@ -181,6 +181,19 @@ async def test_session_config_sentence_commits_and_audio(make_server: Any) -> No
     assert stream.first_latency_ms is not None
 
 
+async def test_whitespace_only_text_is_never_committed(make_server: Any) -> None:
+    # 英文句子之间带空格：最后一句之后只剩一个空格，提交它服务端会返回 400 “no text”（PR-28 实测）
+    server = await make_server()
+    tts = client(server)
+    await synth(tts, "Hi. ", " ", "How are you? ", "  \n")
+    await tts.aclose()
+    assert [e["text"] for e in server.of("input_text_buffer.append")] == [
+        "Hi.",
+        "  How are you?",
+    ]
+    assert len(server.of("input_text_buffer.commit")) == 2
+
+
 async def test_connection_and_session_are_reused(make_server: Any) -> None:
     server = await make_server()
     tts = client(server)
