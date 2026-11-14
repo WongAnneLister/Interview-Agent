@@ -5,7 +5,7 @@
 BACKEND := backend
 UV := uv run --directory $(BACKEND)
 
-.PHONY: help install fmt lint typecheck test check test-live hooks api obs-smoke migrate migration seed test-db cost hotwords benchmark recordings prompts-lock eval eval-quick \
+.PHONY: help install fmt lint typecheck test check test-live hooks api worker obs-smoke migrate migration seed test-db cost hotwords benchmark recordings prompts-lock eval eval-quick \
 	vps-deploy vps-env vps-ps vps-logs obs-up obs-down tunnel check-env fetch-livekit livekit \
 	web-lint web-typecheck web-test web-build web-dev web-check web-deps gen-types
 
@@ -23,6 +23,7 @@ help:
 	@echo "gen-types  导出后端 OpenAPI 并生成前端类型（接口变更后运行）"
 	@echo "test-live  调用真实厂商的测试（需要 .env，手动运行）"
 	@echo "api        启动 API（http://127.0.0.1:8000，改代码自动重载；/readyz 需要隧道）"
+	@echo "worker     启动语音 worker（需要隧道、make livekit；Ctrl+C 一次等面试结束，两次强退）"
 	@echo "migrate    把数据库迁移到最新版本（需要隧道）"
 	@echo "migration  按模型变化生成迁移：make migration name=add_xxx（需要隧道，生成后人工检查）"
 	@echo "seed       创建本地用户并把 id 写入 .env 的 DEFAULT_USER_ID（需要隧道，先 migrate）"
@@ -102,6 +103,10 @@ API_PORT ?= 8000
 api:
 	# 关掉 uvicorn 自带的纯文本访问日志：中间件已经输出带 trace_id 的 JSON 访问日志
 	$(UV) uvicorn interview.api.app:create_app --factory --reload --no-access-log --host 127.0.0.1 --port $(API_PORT)
+
+worker:
+	# 非 dev 模式：Ctrl+C 时不再接新面试，等进行中的面试结束（LIVEKIT_DRAIN_TIMEOUT_S）
+	$(UV) python -m livekit.agents start src/interview/voice/main.py --log-format json
 
 migrate:
 	$(UV) alembic upgrade head

@@ -92,6 +92,10 @@ class LiveKitSettings(BaseSettings):
     agent_name: str = "interview-agent"
     # 候选人入房 token 的有效期（秒）：只用于建立连接，入房后过期不影响通话
     token_ttl_s: int = Field(default=600, gt=0, le=3600)
+    # 语音 worker 预先启动的空闲进程数；框架生产默认是 CPU 核数，本机开这么多会重复加载 Silero
+    worker_idle_processes: int = Field(default=1, ge=0)
+    # worker 收到停止信号后等进行中的面试结束的最长时间（秒）：最长 30 分钟的面试加余量
+    drain_timeout_s: int = Field(default=2400, gt=0)
 
 
 class S3Settings(BaseSettings):

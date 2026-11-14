@@ -50,7 +50,12 @@ async def create_voice_session(
         raise ConflictError("面试计划还没生成，不能开始语音面试")
     if interview.status not in JOINABLE:
         raise ConflictError("这场面试已经结束，不能再进入语音房间")
-    issued = candidate_token(resources.settings.livekit, user_id=user_id, interview_id=interview_id)
+    issued = candidate_token(
+        resources.settings.livekit,
+        user_id=user_id,
+        interview_id=interview_id,
+        language=interview.language,
+    )
     log.info(
         "voice_session_issued",
         interview_id=str(interview_id),

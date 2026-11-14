@@ -22,11 +22,11 @@ from interview.api.app import create_app
 from interview.api.deps import routes_without_user
 from interview.api.resources import Resources
 from interview.config import LiveKitSettings, Settings
-from interview.db.models import Interview, InterviewStatus, Plan, Resume, Turn, User
+from interview.db.models import Interview, InterviewStatus, Language, Plan, Resume, Turn, User
 from interview.db.session import make_sessionmaker
 from interview.domain.plan import InterviewRepository
 from interview.providers.registry import ProviderRegistry
-from interview.voice.session import candidate_token
+from interview.voice.session import DispatchMetadata, candidate_token
 
 URL = f"/api/interviews/{INTERVIEW_ID}/session"
 
@@ -49,7 +49,9 @@ def verify(settings: LiveKitSettings) -> TokenVerifier:
 
 def test_token_only_joins_this_interview_room() -> None:
     settings = livekit()
-    issued = candidate_token(settings, user_id=USER, interview_id=INTERVIEW_ID)
+    issued = candidate_token(
+        settings, user_id=USER, interview_id=INTERVIEW_ID, language=Language.ZH
+    )
     claims = verify(settings).verify(issued.token)
 
     assert issued.room == f"interview-{INTERVIEW_ID}"
@@ -77,19 +79,30 @@ def test_token_only_joins_this_interview_room() -> None:
 
 def test_token_dispatches_agent_with_interview_id() -> None:
     settings = livekit(agent_name="interview-test")
-    issued = candidate_token(settings, user_id=USER, interview_id=INTERVIEW_ID)
+    issued = candidate_token(
+        settings, user_id=USER, interview_id=INTERVIEW_ID, language=Language.ZH
+    )
     config = verify(settings).verify(issued.token).room_config
 
     assert config is not None
     assert config.name == issued.room
     assert [a.agent_name for a in config.agents] == ["interview-test"]
-    assert json.loads(config.agents[0].metadata) == {"interview_id": str(INTERVIEW_ID)}
+    assert json.loads(config.agents[0].metadata) == {
+        "interview_id": str(INTERVIEW_ID),
+        "user_id": str(USER),
+        "language": "zh",
+    }
+    assert DispatchMetadata.parse(config.agents[0].metadata) == DispatchMetadata(
+        interview_id=INTERVIEW_ID, user_id=USER, language=Language.ZH
+    )
 
 
 def test_token_expires_after_configured_ttl() -> None:
     settings = livekit(token_ttl_s=600)
     now = datetime.now(UTC)
-    issued = candidate_token(settings, user_id=USER, interview_id=INTERVIEW_ID, now=now)
+    issued = candidate_token(
+        settings, user_id=USER, interview_id=INTERVIEW_ID, language=Language.ZH, now=now
+    )
     assert issued.expires_at == now + timedelta(seconds=600)
 
     payload = jwt.decode(issued.token, options={"verify_signature": False})
@@ -97,7 +110,9 @@ def test_token_expires_after_configured_ttl() -> None:
 
 
 def test_token_signed_with_other_secret_is_rejected() -> None:
-    issued = candidate_token(livekit(), user_id=USER, interview_id=INTERVIEW_ID)
+    issued = candidate_token(
+        livekit(), user_id=USER, interview_id=INTERVIEW_ID, language=Language.ZH
+    )
     other = livekit(api_secret="another-secret-that-is-long-enough-for-hs256")
     with pytest.raises(jwt.InvalidSignatureError):
         verify(other).verify(issued.token)
@@ -151,6 +166,11 @@ async def test_session_issues_token_for_joinable_interview(
     assert body["room"] == f"interview-{INTERVIEW_ID}"
     claims = verify(api.settings.livekit).verify(body["token"])
     assert claims.video is not None and claims.video.room == body["room"]
+    assert claims.room_config is not None
+    metadata = DispatchMetadata.parse(claims.room_config.agents[0].metadata)
+    assert metadata == DispatchMetadata(
+        interview_id=INTERVIEW_ID, user_id=USER, language=Language.ZH
+    )
 
 
 @pytest.mark.parametrize("other_user", [False, True])

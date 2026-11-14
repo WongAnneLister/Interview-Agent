@@ -128,6 +128,21 @@ make livekit         # 启动（前台运行）；首次会生成 LIVEKIT_API_KE
 
 信令地址 `ws://127.0.0.1:7880`。媒体 UDP 端口 7882 绑定在局域网 IP 上（WebRTC 不使用回环地址做 ICE 候选），系统防火墙首次可能弹窗询问是否允许传入连接（Windows 选“专用网络”，macOS 选“允许”）；没有 token 无法加入房间。
 
+### 语音面试（本机）
+
+浏览器入房后，LiveKit 按 token 里的派发把任务交给语音 worker。现在的 worker 是回声测试：进房先说一句提示语，之后你每说完一句，它就用合成声音复述识别到的文字。启动顺序（各开一个终端）：
+
+```bash
+make tunnel    # 数据库（worker 写用量）
+make livekit   # 本机 LiveKit Server
+make api       # 签发入房 token
+make worker    # 语音 worker；第一次启动会加载 Silero VAD
+make web-dev   # 前端，在计划页点“开始语音面试”
+```
+
+- 需要 `.env` 里的百炼识别、合成配置（`STT_*`、`TTS_*`、`BAILIAN_API_KEY`）。
+- 停止 worker：按一次 Ctrl+C 后不再接新面试，等进行中的面试结束再退出（最长 `LIVEKIT_DRAIN_TIMEOUT_S` 秒）；再按一次强制退出。
+
 ## 厂商实测
 
 `make benchmark` 依次测语音识别、语音合成和大模型，报告写入 `docs/benchmarks/<日期>.md`（提交到仓库，便于对比）。
