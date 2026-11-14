@@ -320,6 +320,23 @@ async def test_cors_only_allows_configured_origin(client: httpx.AsyncClient) -> 
     assert "x-request-id" in simple.headers["access-control-expose-headers"].lower()
 
 
+@pytest.mark.parametrize(("origins", "warned"), [([], True), ([WEB], False)])
+async def test_startup_warns_when_no_web_origin_is_allowed(
+    origins: list[str], warned: bool
+) -> None:
+    settings = make_settings()
+    settings.app.web_origins = origins
+    app = create_app(settings, resource_factory=fake_resources(), init_observability=False)
+    with capture_logs() as logs:
+        async with open_client(app):
+            pass
+    events = [entry for entry in logs if entry["event"] == "web_origins_empty"]
+    assert len(events) == (1 if warned else 0)
+    if warned:
+        assert events[0]["log_level"] == "warning"
+        assert "WEB_ORIGINS" in events[0]["hint"]
+
+
 @pytest.mark.parametrize("observability", [False, True])
 async def test_cors_covers_server_errors(
     exporter: InMemorySpanExporter,

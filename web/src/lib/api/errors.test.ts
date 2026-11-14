@@ -52,7 +52,7 @@ describe("API 错误", () => {
     [
       new TypeError("Failed to fetch"),
       "network_error",
-      "连不上后端服务，请确认已运行 make api",
+      "连不上后端服务，请确认已运行 make api；若后端日志显示请求已成功，检查 .env 的 WEB_ORIGINS 是否包含当前网页地址",
     ],
     [new DOMException("", "TimeoutError"), "timeout", "请求超时，请稍后重试"],
     [new DOMException("", "AbortError"), "aborted", "请求已取消"],

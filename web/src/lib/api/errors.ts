@@ -44,7 +44,7 @@ export function toTransportError(
   if (signal?.aborted || name === "AbortError")
     return new ApiError("请求已取消", null, "aborted");
   return new ApiError(
-    "连不上后端服务，请确认已运行 make api",
+    "连不上后端服务，请确认已运行 make api；若后端日志显示请求已成功，检查 .env 的 WEB_ORIGINS 是否包含当前网页地址",
     null,
     "network_error",
   );

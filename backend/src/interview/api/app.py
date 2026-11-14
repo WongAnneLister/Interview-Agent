@@ -66,6 +66,13 @@ def create_app(
         app.state.resources = resources
         if settings.app.default_user_id is None:
             log.warning("default_user_missing", hint="运行 make seed 创建本地用户")
+        if not settings.app.web_origins:
+            # 浏览器的简单请求（如上传简历）不预检：后端照常执行并计费，响应却被浏览器丢弃，
+            # 前端只能报“连不上后端”（challenges C30）
+            log.warning(
+                "web_origins_empty",
+                hint='前端无法读取任何响应：在 .env 设置 WEB_ORIGINS=["http://localhost:3000"]',
+            )
         log.info("api_started", env=settings.app.app_env)
         try:
             yield
