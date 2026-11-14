@@ -67,6 +67,16 @@ class InterviewerInput(BaseModel):
     language: Language
     history: list[HistoryTurn] = Field(default_factory=list[HistoryTurn])
     candidate_name: str = ""
+    # 编排器在这一轮开头已经说出的过渡语（如“嗯，明白了。”）；模型不要再说一遍
+    transition_spoken: str = ""
+
+
+# 没有题目的阶段里接完话怎么把话轮交回候选人（PR-29 语音实测：只接话不提问，候选人不知道该说什么）
+_CONVERSE_HANDBACK: Mapping[Phase, str] = {
+    Phase.OPENING: "最后问一个轻松的小问题让候选人开口，例如今天状态怎么样。",
+    Phase.SELF_INTRO: "最后请候选人开始或继续自我介绍。",
+    Phase.CANDIDATE_QUESTIONS: "最后问候选人还有没有别的问题。",
+}
 
 
 def _with_reason(text: str, reason: Reason | None) -> str:
@@ -78,7 +88,10 @@ def _base_task(directive: Directive) -> str:
     phase = directive.phase
     question = directive.question_text or ""
     if directive.kind == "opening":
-        return "开场：向候选人打招呼，介绍本场面试的流程，并说明本次面试由 AI 面试官进行。"
+        return (
+            "开场：向候选人打招呼，介绍本场面试的流程，并说明本次面试由 AI 面试官进行。"
+            "最后用一个简短的问题把话轮交给候选人，例如问对方是否准备好了。"
+        )
     if directive.kind == "stage_prompt":
         label = _PHASE_LABELS.get(phase, phase.value)
         text = f"引导进入新阶段（{label}，{phase.value}）。"
@@ -104,7 +117,10 @@ def _base_task(directive: Directive) -> str:
             parts.append(f"追问方向：{directive.focus}")
         return "\n".join(parts)
     if directive.kind == "converse":
-        return f"在当前阶段（{phase.value}）自然接话，例如回应候选人的提问。"
+        text = f"在当前阶段（{phase.value}）自然接话，例如回应候选人的提问或寒暄。"
+        if question:
+            return f"{text}接完话用一句话把话题引回当前题目，请候选人回答。\n当前题目：{question}"
+        return text + _CONVERSE_HANDBACK.get(phase, "最后用一句话把话轮交回候选人。")
     if directive.kind == "check_in":
         text = "候选人思考超时，温和地询问要不要给一点提示，或者换一道题。"
         if question:
@@ -398,6 +414,12 @@ def speak(llm: LLMProvider, data: InterviewerInput, *, interview_id: uuid.UUID) 
     task = _task_text(data.directive)
     if data.candidate_name and _is_opening(data.directive):
         task = f"{task}\n候选人称呼：{data.candidate_name}"
+    if data.transition_spoken:
+        # 编排器已经先说了一句过渡语盖住评估等待；模型再过渡一次就成了“Okay. Okay, moving on.”
+        task = (
+            f"{task}\n你刚刚已经说过“{data.transition_spoken}”，不要重复它，"
+            "也不要再用“好的”“明白”“Okay”这类套话开头，直接接着说。"
+        )
     history = "\n".join(
         f"{'面试官' if turn.role == TurnRole.INTERVIEWER else '候选人'}：{turn.text}"
         for turn in data.history[-MAX_HISTORY_TURNS:]

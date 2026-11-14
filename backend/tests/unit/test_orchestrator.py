@@ -668,6 +668,9 @@ async def test_transition_sentence_is_first_and_in_turn_text(make_harness: Any) 
     turns = await fetch_turns(harness)
     interviewer = [turn for turn in turns if turn.role is TurnRole.INTERVIEWER]
     assert interviewer[-1].text.startswith(transitions[0].text)
+    # 前台模型知道过渡语已经说过，不会再说一遍（PR-29）
+    _, user = harness.front.calls[-1]["messages"]
+    assert f"你刚刚已经说过“{transitions[0].text}”" in user["content"]
     await harness.orchestrator.aclose()
 
 

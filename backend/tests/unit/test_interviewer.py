@@ -30,7 +30,7 @@ from interview.domain.interviewer import (
 )
 from interview.domain.state_machine import Directive, DirectiveKind, Phase, Reason
 from interview.observability import usage
-from interview.prompts.loader import DATA_NOTICE
+from interview.prompts.loader import DATA_NOTICE, get_prompt_library
 from interview.providers.fake import FakeLLM
 from interview.providers.observed import CallContext
 from interview.providers.registry import ProviderFactories, ProviderRegistry
@@ -475,3 +475,50 @@ def test_appended_question_only_for_ask_and_repeated_ask() -> None:
     follow = directive("follow_up", Phase.TECHNICAL, question_text=question, focus="失败重试")
     assert appended_question(follow) is None
     assert appended_question(directive("ask", Phase.TECHNICAL, question_text=None)) is None
+
+
+# ---- 说完把话轮交回候选人、不重复过渡语（PR-29 语音实测）----
+
+
+def test_opening_ends_by_handing_the_turn_to_the_candidate() -> None:
+    assert "把话轮交给候选人" in _task_text(directive("opening", Phase.OPENING))
+
+
+@pytest.mark.parametrize(
+    ("phase", "expected"),
+    [
+        (Phase.OPENING, "轻松的小问题"),
+        (Phase.SELF_INTRO, "自我介绍"),
+        (Phase.CANDIDATE_QUESTIONS, "还有没有别的问题"),
+        (Phase.TECHNICAL, "把话轮交回候选人"),
+    ],
+)
+def test_converse_without_question_hands_back_by_phase(phase: Phase, expected: str) -> None:
+    assert expected in _task_text(directive("converse", phase))
+
+
+def test_converse_with_question_steers_back_to_it() -> None:
+    question = "如何设计一个高可用的消息队列？"
+    text = _task_text(directive("converse", Phase.TECHNICAL, question_text=question))
+    assert "引回当前题目" in text and question in text
+
+
+async def test_spoken_transition_is_not_repeated() -> None:
+    llm = FakeLLM(reply="那我们聊聊缓存。", chunk_size=10)
+    data = make_input().model_copy(update={"transition_spoken": "嗯，明白了。"})
+    _ = [s async for s in speak(llm, data, interview_id=INTERVIEW_ID)]
+    _, user = llm.calls[0]["messages"]
+    assert "你刚刚已经说过“嗯，明白了。”" in user["content"]
+    assert "不要重复它" in user["content"]
+
+    plain = FakeLLM(reply="好。", chunk_size=10)
+    _ = [s async for s in speak(plain, make_input(), interview_id=INTERVIEW_ID)]
+    assert "你刚刚已经说过" not in plain.calls[0]["messages"][1]["content"]
+
+
+def test_system_prompt_requires_handing_back_the_turn() -> None:
+    prompt = get_prompt_library().render(
+        "interviewer", task="t", history="", style="gentle", language="zh"
+    )
+    assert "把话轮交还候选人" in prompt.messages[0]["content"]
+    assert prompt.version == 2

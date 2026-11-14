@@ -285,6 +285,7 @@ class InterviewOrchestrator:
             history=build_history(self._turns, plan, state.phase, language=self._language),
             interview_id=self._interview_id,
             span=span,
+            transition_spoken=transition,
         )
         async with aclosing(speech.events()) as events:
             async for event in events:

@@ -55,8 +55,10 @@ class Speech:
         history: Sequence[HistoryTurn],
         interview_id: uuid.UUID,
         span: OpenSpan,
+        transition_spoken: str = "",
     ) -> None:
         self._llm = llm
+        self._transition_spoken = transition_spoken
         self._directive = directive
         self._style = style
         self._language = language
@@ -73,6 +75,7 @@ class Speech:
                 style=self._style,
                 language=self._language,
                 history=self._history,
+                transition_spoken=self._transition_spoken,
             ),
             interview_id=self._interview_id,
         )
