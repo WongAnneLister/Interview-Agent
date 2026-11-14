@@ -1,10 +1,17 @@
-"""请面试官再说一遍的识别：短句里的明确请求才算，长回答里的技术词不算。"""
+"""候选人一句话里的明确意图：请重复（正则）、我想一下 / 我说完了（词表）；短句才算。"""
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
-from interview.domain.turn_intents import is_repeat_request
+from interview.domain.turn_intents import (
+    TurnKeywords,
+    ends_with_done,
+    is_repeat_request,
+    is_think_request,
+)
 
 
 @pytest.mark.parametrize(
@@ -47,3 +54,65 @@ def test_repeat_requests(text: str) -> None:
 )
 def test_not_repeat_requests(text: str) -> None:
     assert not is_repeat_request(text)
+
+
+# ---- 我想一下 / 我说完了（PR-30，词表在 config/turn_keywords.yaml）----
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "我想一下。",
+        "嗯，让我想想",
+        "Let me think.",
+        "Hmm, give me a moment.",
+        "稍等一下，我考虑一下",
+    ],
+)
+def test_think_requests(text: str) -> None:
+    assert is_think_request(text)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "",
+        "我想一下当时的情况，我们的订单量在大促时是平时的十倍，所以先扩了消息队列的分区。",
+        "Let me think about how we partitioned the queue: we used the order id as the key "
+        "so every order stays in one partition.",
+        "我做过支付系统。",
+    ],
+)
+def test_not_think_requests(text: str) -> None:
+    assert not is_think_request(text)
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["……所以吞吐提升了三倍。就这些。", "我说完了", "And that's all.", "That's it!", "I'm done"],
+)
+def test_done_phrases_at_the_end(text: str) -> None:
+    assert ends_with_done(text)
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["", "就这些问题我们当时讨论了很久，最后选了 Kafka", "That's all I knew at first, but then"],
+)
+def test_done_phrase_not_at_the_end(text: str) -> None:
+    assert not ends_with_done(text)
+
+
+def test_keywords_file_is_configurable(tmp_path: Path) -> None:
+    custom = tmp_path / "turn_keywords.yaml"
+    custom.write_text("think:\n  zh: [容我想想]\ndone:\n  en: [over to you]\n", encoding="utf-8")
+    keywords = TurnKeywords.load(custom)
+    assert is_think_request("容我想想", keywords) and not is_think_request("我想一下", keywords)
+    assert ends_with_done("Done with the design. Over to you!", keywords)
+
+
+def test_empty_keyword_group_is_rejected(tmp_path: Path) -> None:
+    broken = tmp_path / "turn_keywords.yaml"
+    broken.write_text("think:\n  zh: []\ndone:\n  zh: [说完了]\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="think"):
+        TurnKeywords.load(broken)

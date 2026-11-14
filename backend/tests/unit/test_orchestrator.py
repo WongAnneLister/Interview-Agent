@@ -929,3 +929,25 @@ async def test_repeat_request_repeats_question_without_evaluation(make_harness: 
     assert [t.role for t in turns[-2:]] == [TurnRole.CANDIDATE, TurnRole.INTERVIEWER]
     assert turns[-2].text == "Sorry, could you repeat the question?"  # 照样记进转写
     await harness.orchestrator.aclose()
+
+
+async def test_think_request_waits_silently_then_checks_in(make_harness: Any) -> None:
+    # PR-30：“让我想想”进入等待，面试官不接话、不评估；思考超时后温和询问
+    harness = await make_harness(actions=["next_question"])
+    await open_to_deep(harness)
+    eval_calls = len(harness.eval_llm.calls)
+    events = await collect(harness.orchestrator.on_user_turn("嗯，让我想想。", 10_000, 11_000))
+    assert events_of(events, InterviewerSentence) == []
+    assert len(harness.eval_llm.calls) == eval_calls
+    state = harness.orchestrator.state
+    assert state is not None and state.waiting_for_thought
+    turns = await fetch_turns(harness)
+    assert (turns[-1].role, turns[-1].text) == (TurnRole.CANDIDATE, "嗯，让我想想。")
+
+    assert await collect(harness.orchestrator.on_tick(20_000)) == []  # 还没到 20 秒
+    checked = await collect(harness.orchestrator.on_tick(31_500))
+    assert events_of(checked, InterviewerSentence)  # 面试官开口询问
+    state = harness.orchestrator.state
+    assert state is not None and not state.waiting_for_thought
+    assert state.last_directive is not None and state.last_directive.kind == "check_in"
+    await harness.orchestrator.aclose()

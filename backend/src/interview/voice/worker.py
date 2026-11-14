@@ -175,10 +175,10 @@ class InterviewAgent(Agent):
 
 
 def turn_handling(settings: Settings) -> TurnHandlingOptions:
-    """候选人停顿多久算说完：框架默认 0.5 秒会在回答中途抢话，用配置值（默认 1.5 秒）。"""
-    min_delay = settings.livekit.endpointing_min_delay_s
+    """会话开始时按开放回答的停顿参数（TURN_OPEN_*）；框架默认 0.5 秒会在回答中途抢话。"""
+    turn = settings.turn
     return TurnHandlingOptions(
-        endpointing={"min_delay": min_delay, "max_delay": max(3.0, min_delay)}
+        endpointing={"min_delay": turn.open_min_delay_s, "max_delay": turn.open_max_delay_s}
     )
 
 

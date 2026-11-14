@@ -1,0 +1,46 @@
+# 候选人一句话里的明确意图（PR-30 轮次策略，backend/src/interview/domain/turn_intents.py 读取）。
+# 路径可用环境变量 TURN_KEYWORDS_FILE 覆盖。匹配时忽略大小写、标点和空白。
+#
+# think：候选人要求思考时间。只认短句（整句基本就是这句话），面试官不接话，
+#        等到 TURN_THINK_TIMEOUT_S 后温和询问。长回答里顺带说的“我想一下”不算。
+# done： 候选人明确说答完了。出现在一段转写的句尾时立即结束本轮，不再等停顿判定。
+
+think:
+  zh:
+    - 我想一下
+    - 我想想
+    - 让我想一下
+    - 让我想想
+    - 我考虑一下
+    - 我思考一下
+    - 给我一点时间
+    - 稍等一下
+    - 等我想想
+  en:
+    - let me think
+    - let me think about it
+    - give me a moment
+    - give me a second
+    - give me a minute
+    - one moment
+    - let me think for a second
+
+done:
+  zh:
+    - 我说完了
+    - 我讲完了
+    - 我答完了
+    - 就这些
+    - 就这些了
+    - 我的回答就是这些
+    - 我的回答完了
+    - 就是这样
+    - 没有了
+  en:
+    - that's all
+    - that is all
+    - i'm done
+    - i am done
+    - that's it
+    - that's my answer
+    - i'm finished

@@ -13,13 +13,14 @@ from pathlib import Path
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field, SecretStr, ValidationError
+from pydantic import BaseModel, Field, SecretStr, ValidationError, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # src/interview/config.py → 仓库根目录
 REPO_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_ENV_FILE = REPO_ROOT / ".env"
 DEFAULT_PRICING_FILE = REPO_ROOT / "backend" / "config" / "pricing.yaml"
+DEFAULT_TURN_KEYWORDS_FILE = REPO_ROOT / "backend" / "config" / "turn_keywords.yaml"
 
 
 class ConfigError(RuntimeError):
@@ -51,6 +52,32 @@ class AppSettings(BaseSettings):
     ws_idle_timeout_s: float = Field(default=60.0, gt=0)
     # 服务端推进超时（阶段、思考）的 tick 间隔（秒）
     ws_tick_interval_s: float = Field(default=1.0, gt=0)
+
+
+class TurnSettings(BaseSettings):
+    """语音面试的轮次策略（PR-30）：候选人停顿多久算说完，按面试官上一句的类型取值。
+
+    min_delay：判定说完后再等多久；max_delay：轮次检测模型认为没说完时最多等多久
+    （不用模型时只有 min_delay 起作用）。框架默认 0.5 秒会在开放回答的正常停顿处抢话（PR-29 实测）。
+    """
+
+    model_config = _config("TURN_")
+
+    short_min_delay_s: float = Field(default=0.6, gt=0, le=10)  # 确认类短问题（准备好了吗）
+    short_max_delay_s: float = Field(default=2.0, gt=0, le=20)
+    open_min_delay_s: float = Field(default=1.5, gt=0, le=10)  # 开放回答
+    open_max_delay_s: float = Field(default=4.0, gt=0, le=20)  # 没说完的 3 秒停顿不被抢话
+    think_timeout_s: float = Field(default=20.0, gt=0)  # 说“我想一下”后最多等多久再询问
+    detector_enabled: bool = True  # 轮次检测模型（约 400 MB，make download-models）
+    keywords_file: Path = DEFAULT_TURN_KEYWORDS_FILE  # “我想一下 / 我说完了”词表
+
+    @model_validator(mode="after")
+    def max_not_below_min(self) -> TurnSettings:
+        if self.short_max_delay_s < self.short_min_delay_s:
+            raise ValueError("TURN_SHORT_MAX_DELAY_S 不能小于 TURN_SHORT_MIN_DELAY_S")
+        if self.open_max_delay_s < self.open_min_delay_s:
+            raise ValueError("TURN_OPEN_MAX_DELAY_S 不能小于 TURN_OPEN_MIN_DELAY_S")
+        return self
 
 
 class ReportSettings(BaseSettings):
@@ -96,9 +123,6 @@ class LiveKitSettings(BaseSettings):
     worker_idle_processes: int = Field(default=1, ge=0)
     # worker 收到停止信号后等进行中的面试结束的最长时间（秒）：最长 30 分钟的面试加余量
     drain_timeout_s: int = Field(default=2400, gt=0)
-    # 候选人停顿多久算说完这一轮（秒）。框架默认 0.5 秒，
-    # 开放回答里的正常停顿就会被抢话（PR-29 实测）；PR-30 会按题型动态调整
-    endpointing_min_delay_s: float = Field(default=1.5, gt=0, le=10)
 
 
 class S3Settings(BaseSettings):
@@ -265,6 +289,7 @@ class Settings(BaseModel):
     metrics: MetricsSettings
     cost: CostSettings
     report: ReportSettings = Field(default_factory=ReportSettings)
+    turn: TurnSettings = Field(default_factory=TurnSettings)
 
 
 def _load[T: BaseSettings](cls: type[T], env_file: Path | None, missing: list[str]) -> T:
@@ -301,6 +326,7 @@ def load_settings(env_file: Path | None = DEFAULT_ENV_FILE) -> Settings:
     metrics = _load(MetricsSettings, env_file, errors)
     cost = _load(CostSettings, env_file, errors)
     report = _load(ReportSettings, env_file, errors)
+    turn = _load(TurnSettings, env_file, errors)
     if observability.enabled and not langfuse.configured:
         errors.append(
             "LANGFUSE_HOST / LANGFUSE_PUBLIC_KEY / LANGFUSE_SECRET_KEY"
@@ -330,6 +356,7 @@ def load_settings(env_file: Path | None = DEFAULT_ENV_FILE) -> Settings:
         metrics=metrics,
         cost=cost,
         report=report,
+        turn=turn,
     )
 
 

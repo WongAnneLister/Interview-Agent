@@ -11,6 +11,7 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from interview.domain.state_machine import DEFAULT, MachineConfig, Phase
+from interview.domain.turn_intents import TurnKeywords
 
 
 class OrchestratorConfig(BaseModel):
@@ -18,6 +19,7 @@ class OrchestratorConfig(BaseModel):
 
     eval_wait_s: float = 2.5  # 从启动评估算起，最多等多久
     machine: MachineConfig = DEFAULT
+    keywords: TurnKeywords | None = None  # “我想一下”等词表；为空用仓库里的默认词表
 
 
 DEFAULT_CONFIG = OrchestratorConfig()

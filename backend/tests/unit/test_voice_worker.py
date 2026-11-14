@@ -140,7 +140,8 @@ def test_turn_handling_waits_for_configured_pause() -> None:
     from interview.voice.worker import turn_handling
 
     settings = make_settings()
-    assert settings.livekit.endpointing_min_delay_s == 1.5  # 默认不在 0.5 秒的停顿处抢话
-    assert turn_handling(settings).get("endpointing") == {"min_delay": 1.5, "max_delay": 3.0}
-    settings.livekit.endpointing_min_delay_s = 4.0
-    assert turn_handling(settings).get("endpointing") == {"min_delay": 4.0, "max_delay": 4.0}
+    # 默认不在 0.5 秒的停顿处抢话；没说完时最多等 4 秒
+    assert turn_handling(settings).get("endpointing") == {"min_delay": 1.5, "max_delay": 4.0}
+    settings.turn.open_min_delay_s = 2.0
+    settings.turn.open_max_delay_s = 5.0
+    assert turn_handling(settings).get("endpointing") == {"min_delay": 2.0, "max_delay": 5.0}
