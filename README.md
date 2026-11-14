@@ -142,6 +142,7 @@ make web-dev   # 前端，在计划页点“开始语音面试”
 
 - 需要 `.env` 里的百炼识别、合成配置（`STT_*`、`TTS_*`、`BAILIAN_API_KEY`）。
 - 停止 worker：按一次 Ctrl+C 后不再接新面试，等进行中的面试结束再退出（最长 `LIVEKIT_DRAIN_TIMEOUT_S` 秒）；再按一次强制退出。
+- 轮次策略（PR-30）：面试官问确认类短问题时停顿 0.6 秒就算说完，开放回答 1.5 秒（轮次检测认为没说完时最多等 4 秒），都在 `.env` 的 `TURN_*` 里调。说“我想一下”面试官会安静等待（`TURN_THINK_TIMEOUT_S`），说“我说完了 / 就这些”立即接话；词表在 `backend/config/turn_keywords.yaml`。轮次检测用本机的小模型（随依赖安装，不用下载，音频不出本机，见 challenges C34）。worker 日志里的 `turn_policy_applied`、`voice_turn_committed`、`voice_reply_started` 用来调参。
 
 ## 厂商实测
 

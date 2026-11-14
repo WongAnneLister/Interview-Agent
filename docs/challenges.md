@@ -22,7 +22,7 @@
 | C8 | 语音端到端延迟超出 PRD 预算 | 每轮回应都偏慢 | 未解决 | 过渡语缓存、首句短句化（PR-18 / PR-27） |
 | C9 | Qwen-TTS Realtime 偶发卡住，且不能取消合成 | 卡住时最多 10 秒没声音；打断后要重新建连 | 未解决 | 打断已接到厂商流的 aclose()（PR-27）；卡住兜底和打断后预连留 PR-31 |
 | C10 | 切到备用模型后，结果里记的仍是主模型 | 评分来自哪个模型记错，报告无法按 PRD 标明 | 已解决 | PR-17 修复 |
-| C11 | 识别结果不带语种 | 缺语种时轮次检测直接不工作 | 已解决 | 识别插件用面试语言兜底（PR-27）；模型是否支持 zh 待 PR-28 下载模型后确认 |
+| C11 | 识别结果不带语种 | 缺语种时轮次检测直接不工作 | 已解决 | 识别插件用面试语言兜底（PR-27）；轮次检测模型支持 zh（PR-30 核对） |
 | C12 | 单元测试本机能过、CI 不过：偷偷读了 .env | main 上 CI 连续两次失败 | 已解决 | 测试 mock 掉用量记录；提交前模拟无 .env 环境跑一次 |
 | C13 | 正则的 `\b` 在汉字前不成立 | 口语规范化对“3ms左右”“P95延迟”整条不生效 | 已解决 | PR-18 改用 ASCII 字母数字边界；以后写正则都要注意 |
 | C14 | 打断时不能从别的协程关闭正在等待的异步生成器 | 语音层检测到打断后，面试官停不下来还报错 | 已解决 | PR-18 改为把等待放进任务，aclose 时取消 |
@@ -45,6 +45,7 @@
 | C31 | 大模型流式调用只有读超时，没有总时长上限 | 开思考的 max 一次出题跑了 291 秒，创建面试共 457 秒，前端早已报错，后端照常建面试、照常计费 | 已解决 | `complete()` 加每个角色可配的总时限（默认 120 秒），到期抛 ProviderTimeout 切备用；流式调用不加 |
 | C32 | 识别连接整场不断，静音也按时长计费 | 30 分钟面试识别费约 0.59 元，其中候选人没说话的时间也在花钱 | 已接受 | v0 先这样；以后只在 VAD 判定有人说话时送音频 |
 | C33 | DeepSeek 欠费后实时评估全部失败，改走中转又慢了约 1.5 秒 | “请再说一遍”被跳到下一题；中转让追问变少 | 已解决 | 充值后恢复直连（首 token 中位数 0.67 秒）；“请再说一遍”改为规则识别、不经过评估 |
+| C34 | 官方推荐的轮次检测在开发模式下默认走 LiveKit Cloud | 不显式指定版本时，候选人音频会被发到 LiveKit 云端推理 | 已解决 | 固定 `TurnDetector(version="v1-mini")` 本机推理；单测断言型号 |
 
 实测原始数字见 [findings.md](benchmarks/findings.md)，这里只记它们带来的风险和对策。
 
@@ -165,6 +166,7 @@
 - **核对结果（2026-11-14，livekit-plugins-turn-detector 1.8.11 源码）**：`unlikely_threshold(None)` 返回 None，`supports_language()` 随之为 False，轮次检测会直接跳过，只剩 VAD 的静音判断。所以兜底不是可选项。
 - **修复**：识别插件 `voice/stt_plugin.py` 在事件不带语种时填面试语言（`Language.ZH` / `EN`），单元测试覆盖。中英混说仍按面试语言处理。
 - **待确认**：模型的 `languages.json` 里有没有 `zh`，要等 PR-28 第一次下载模型后确认；没有的话中文面试只能靠 VAD 判断说完，属于 PR-30 轮次策略的问题。
+- **核对结果（2026-11-14，PR-30）**：文本模型 MultilingualModel（v0.4.1-intl）的 `languages.json` 有 zh；PR-30 实际用的音频模型 `TurnDetector(version="v1-mini")` 的阈值表里也有 zh（0.355）和 en。中文面试可以用轮次检测，见 C34。
 
 ## C12 单元测试本机能过、CI 不过：偷偷读了 .env（已解决）
 
@@ -415,3 +417,11 @@
 - **结果（2026-11-14）**：用户充值后改回直连（`DEEPSEEK_BASE_URL=https://api.deepseek.com`，余额查询 `is_available: true`），同样方法测 5 次首 token 中位数 671 ms（517–1007），完整调用中位数 793 ms。另外“请再说一遍 / say it again / what's the question”这类短句改为规则识别（`domain/turn_intents.py`），直接重复当前题目、不经过实时评估，评估失败时也不会再跳题。
 - **遗留**：实时评估和备用模型仍都是 DeepSeek，同一个账户欠费或故障时两者一起失效（C18）。
 - **状态**：已解决。
+
+## C34 官方推荐的轮次检测在开发模式下默认走 LiveKit Cloud（已解决）
+
+- **发现**：2026-11-14，PR-30。执行文档写的 `livekit.plugins.turn_detector.multilingual.MultilingualModel` 在 livekit-agents 1.8.11 里已标为 deprecated，导入时提示改用 `livekit.agents.inference.TurnDetector`。读它的源码（`inference/eot/detector.py`）发现：不传 `version` 时，**开发模式或托管环境下默认用 `v1`，`v1` 通过 LiveKit 推理网关在云端推理**，用的是 `LIVEKIT_API_KEY / SECRET`；本机 LiveKit 的密钥连不上云端时才退回本机的 `v1-mini`。
+- **影响**：如果照官方示例写 `TurnDetector()`，候选人的音频会在开发时被尝试发往 LiveKit Cloud，违反“媒体不出本机”的约定（CLAUDE.md 技术栈、`deploy/local/livekit.yaml`），而且连不上时每轮还要先等一次失败。
+- **处理**：固定 `TurnDetector(version="v1-mini")`：只建本机推理通道（`_LocalTransport`，权重随 `livekit-local-inference` 0.3.1 安装，加载 0.44 秒，不用另外下载），不建云端连接。阈值表里有 zh（0.355）和 en（0.36）。`TURN_DETECTOR_ENABLED=false` 时不用模型、只靠静音判断。单测断言型号是 `turn-detector-v1-mini`，防止以后被改回默认值。
+- **代价与待测**：音频模型在 CPU 上推理，PR-29 实测机器负载 20 时 Silero VAD 已经跟不上实时；轮次检测会再多占一些 CPU。等机器空闲时实测“说完到判定说完”的毫秒数（`voice_turn_committed` 日志），和 PR-29 的 0.58 秒（无模型、min 0.5 秒）对比。
+- **状态**：已解决（隐私）；CPU 开销待实测。
