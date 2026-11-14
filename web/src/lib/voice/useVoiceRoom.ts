@@ -11,7 +11,7 @@ import {
 } from "livekit-client";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createVoiceSession } from "../api/client";
-import { classifyVoiceError, failure, type VoiceFailure } from "./media";
+import { classifyVoiceError, concreteInputId, failure, type VoiceFailure } from "./media";
 
 export type VoicePhase =
   | "idle" // 还没开始
@@ -28,6 +28,18 @@ const CAPTURE = {
   noiseSuppression: true,
   autoGainControl: true,
 } as const;
+
+// 把麦克风从“default”固定到当前那个具体设备：livekit-client 在系统默认输入变化时会跟着切
+// （macOS 连续互通会在面试中途把 iPhone 设成默认，PR-30 实测）。固定失败不影响通话。
+async function pinMicrophone(room: Room): Promise<void> {
+  try {
+    const devices = await Room.getLocalDevices("audioinput", false);
+    const deviceId = concreteInputId(devices);
+    if (deviceId) await room.switchActiveDevice("audioinput", deviceId, true);
+  } catch {
+    /* 继续用默认设备 */
+  }
+}
 
 function mediaAvailable(): boolean {
   return typeof navigator !== "undefined" && !!navigator.mediaDevices?.getUserMedia;
@@ -144,6 +156,8 @@ export function useVoiceRoom(id: string) {
       await next.localParticipant.publishTrack(track, {
         source: Track.Source.Microphone,
       });
+      if (stale()) return;
+      await pinMicrophone(next);
       if (stale()) return;
       setCanPlayAudio(next.canPlaybackAudio);
       setPeers(next.remoteParticipants.size);

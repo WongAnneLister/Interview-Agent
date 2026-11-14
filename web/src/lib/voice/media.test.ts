@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ApiError } from "../api/errors";
-import { classifyVoiceError, levelFromSamples } from "./media";
+import { classifyVoiceError, concreteInputId, levelFromSamples } from "./media";
 
 function domError(name: string) {
   const error = new Error("x");
@@ -71,5 +71,31 @@ describe("levelFromSamples", () => {
   it("-30 dB 落在中间", () => {
     const amplitude = 10 ** (-30 / 20);
     expect(levelFromSamples([amplitude, -amplitude])).toBeCloseTo(0.5);
+  });
+});
+
+describe("concreteInputId", () => {
+  const mac = { deviceId: "mac", groupId: "g-mac", kind: "audioinput" };
+  const iphone = { deviceId: "iphone", groupId: "g-iphone", kind: "audioinput" };
+  const speaker = { deviceId: "out", groupId: "g-mac", kind: "audiooutput" };
+
+  it("把 Chrome 的“默认”换成同组的具体设备", () => {
+    const def = { deviceId: "default", groupId: "g-mac", kind: "audioinput" };
+    expect(concreteInputId([def, iphone, mac, speaker])).toBe("mac");
+  });
+
+  it("默认是 iPhone 时就固定 iPhone，不再跟着系统换", () => {
+    const def = { deviceId: "default", groupId: "g-iphone", kind: "audioinput" };
+    expect(concreteInputId([def, mac, iphone])).toBe("iphone");
+  });
+
+  it("没有“默认”这一项时取第一个具体设备，跳过虚拟项", () => {
+    const comms = { deviceId: "communications", groupId: "g-mac", kind: "audioinput" };
+    expect(concreteInputId([comms, mac, iphone])).toBe("mac");
+  });
+
+  it("没有麦克风时返回 undefined", () => {
+    expect(concreteInputId([speaker])).toBeUndefined();
+    expect(concreteInputId([])).toBeUndefined();
   });
 });

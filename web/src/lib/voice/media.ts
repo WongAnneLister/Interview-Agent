@@ -109,3 +109,27 @@ export function levelFromSamples(samples: ArrayLike<number>): number {
   const db = 20 * Math.log10(rms);
   return Math.min(1, Math.max(0, (db - SILENCE_DB) / -SILENCE_DB));
 }
+
+// 设备列表里的一项（MediaDeviceInfo 的子集，便于测试）
+export interface InputDevice {
+  deviceId: string;
+  groupId: string;
+  kind: string;
+}
+
+const VIRTUAL_IDS = new Set(["default", "communications", ""]);
+
+// 找出“默认麦克风”背后的具体设备。用“default”时，系统默认输入一变（比如 macOS 连续互通
+// 把 iPhone 设成默认），livekit-client 就跟着切过去；固定成具体设备就不会了。
+// Chrome 的列表里有一项 deviceId 为 "default"，它和真实设备的 groupId 相同；
+// 其他浏览器没有这一项时，取第一个具体设备。
+export function concreteInputId(devices: readonly InputDevice[]): string | undefined {
+  const inputs = devices.filter((d) => d.kind === "audioinput");
+  const real = inputs.filter((d) => !VIRTUAL_IDS.has(d.deviceId));
+  const fallback = inputs.find((d) => d.deviceId === "default");
+  if (fallback?.groupId) {
+    const match = real.find((d) => d.groupId === fallback.groupId);
+    if (match) return match.deviceId;
+  }
+  return real[0]?.deviceId;
+}
