@@ -71,6 +71,7 @@
 | 2026-11-07 | **报告改用 `llm_report`（qwen3.8-max 关思考）后，真实配置下整份报告 19.5 秒**，逐题 7.7–10.5 秒，评分 4/3/4/4，`test_report_live.py` 的 60 秒断言通过 | `tests/live/test_report_live.py`（读 `.env` 的 `LLM_REPORT_*`） | 满足 PRD R1；区分度待评测验证 |
 | 2026-11-07 | **流式提前决策：deepseek-flash 关思考，决策（`next_action` + `follow_up_focus` 到齐）中位数 1.07 秒（固定问答 8 次，0.82–2.86 秒）、0.97 秒（432 字真实长回答 6 次，0.83–1.37 秒）**；同一批完整评估中位数 2.64 秒、3.40 秒 | 脚本调用 `evaluate(on_decision=...)`，真实回答取自 2026-11-07_005240 评测的优秀人设 q3 | 决策时间不再随输出长度增长；14 次里 13 次在 2.5 秒内，见 [optimizations.md](../optimizations.md) 优化四 |
 | 2026-11-14 | **创建面试（qwen3.8-max 开思考）整次请求 457 秒**：JD 解析 70 秒；出题第 1 次 291 秒，输出没通过校验，重试 96 秒后成功（30 分钟、6 题）。整个过程模型一直在吐片段，30 秒读超时从未触发 | API 访问日志 + usage_events，手动验证 PR-26 时 | 前端 240 秒等待上限先到，页面报错而后端照常建好面试；见 [challenges.md C31](../challenges.md) |
+| 2026-11-14 | **DeepSeek 改走第三方中转（new-api，www.traxnode.com）后，deepseek-flash 关思考首 token 中位数 2102 ms（1439–2354，5 次），5 token 的完整调用中位数 2406 ms**；直连 DeepSeek 时首 token P50 551–619 ms（2026-10-17） | 用项目的 OpenAI 兼容适配器直接调用，提示词约 40 token、JSON 模式 | 实时评估的 2.5 秒决策上限所剩无几，降级为换题会变多；见 [challenges.md C33](../challenges.md) |
 
 ## 对照 PRD 延迟预算（候选人说完 → 听到面试官首个字）
 
