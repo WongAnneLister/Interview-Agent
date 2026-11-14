@@ -198,7 +198,14 @@ export default function PlanPage() {
                 disabled={(dirty && !readOnly) || busy}
                 onClick={() => router.push(`/interviews/${id}/text`)}
               >
-                开始面试
+                开始文字面试
+              </button>
+              <button
+                className={buttonPrimary}
+                disabled={(dirty && !readOnly) || busy}
+                onClick={() => router.push(`/interviews/${id}/voice`)}
+              >
+                开始语音面试
               </button>
             </div>
           </section>
