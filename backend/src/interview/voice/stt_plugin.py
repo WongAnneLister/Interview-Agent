@@ -6,6 +6,10 @@
   插件随即结束当前厂商任务（Fun-ASR 收到 finish-task 立刻给出最终结果），下一段音频来了再开新任务。
   不 flush 时要等 Fun-ASR 自己判定句末，实测说完到出最终结果 2.5–13 秒（PR-29，C8）。
   每个任务的时间戳从 0 算，换任务时让基类按下一帧重新定锚。
+- flush 之后最多等 FLUSH_FINAL_WAIT_S 秒拿最终结果，等不到就把最近一次中间结果
+  当作最终结果、放弃这个任务；任务出错时也一样先保住中间结果再抛错。
+  实测长回答里 Fun-ASR 一直不断句，finish-task 之后十几秒不返回，判定说完被拖到 6–10 秒，
+  超时后整段识别结果被丢弃，候选人说的话等于没说（PR-30 实测）。
 - 事件映射（参照官方 Deepgram 插件）：一句话的第一个 partial 之前发 START_OF_SPEECH，
   partial → INTERIM_TRANSCRIPT，final → FINAL_TRANSCRIPT + END_OF_SPEECH，
   随后发一条 RECOGNITION_USAGE（本句新增的计费时长），基类据此上报 STTMetrics。
@@ -19,6 +23,7 @@ import asyncio
 from collections.abc import AsyncIterator
 from typing import Never
 
+import structlog
 from livekit import rtc
 from livekit.agents import (
     DEFAULT_API_CONNECT_OPTIONS,
@@ -34,8 +39,12 @@ from interview.db.models import Language
 from interview.providers.base import ProviderError, STTEvent, STTProvider
 from interview.voice.plugin_errors import to_api_error
 
+log = structlog.get_logger(__name__)
+
 # 百炼 Fun-ASR 实时识别要求的输入采样率；LiveKit 的麦克风帧通常是 48 kHz，由基类重采样
 SAMPLE_RATE = 16000
+# flush 后等最终结果的上限（秒）：比 LiveKit 手动结束一轮时等转写的 2 秒短，保证框架先拿到结果
+FLUSH_FINAL_WAIT_S = 1.5
 
 
 class ProviderSTT(stt.STT[Never]):  # 没有自定义事件
@@ -103,6 +112,8 @@ class _Stream(stt.RecognizeStream):
         self._speaking = False
         self._input_ended = False
         self._billed_s = 0.0  # 当前任务已经通过 RECOGNITION_USAGE 上报的计费时长
+        self._partial: STTEvent | None = None  # 当前这句最近的中间结果，还没有对应的最终结果
+        self._deadline: asyncio.Timeout | None = None  # flush 后才开始计时
 
     async def _next_frame(self) -> rtc.AudioFrame | None:
         """下一段的第一帧；跳过没有音频的 flush，输入结束返回 None。"""
@@ -122,10 +133,17 @@ class _Stream(stt.RecognizeStream):
                 item = await self._input_ch.recv()
             except utils.aio.ChanClosed:
                 self._input_ended = True
+                self._start_final_deadline()
                 return
             if not isinstance(item, rtc.AudioFrame):  # _FlushSentinel：候选人停下了
+                self._start_final_deadline()
                 return
             yield item.data.tobytes()
+
+    def _start_final_deadline(self) -> None:
+        if self._deadline is not None:
+            loop = asyncio.get_running_loop()
+            self._deadline.reschedule(loop.time() + FLUSH_FINAL_WAIT_S)
 
     async def _run(self) -> None:
         self._input_ended = False
@@ -140,6 +158,7 @@ class _Stream(stt.RecognizeStream):
     async def _recognize(self, first: rtc.AudioFrame) -> None:
         owner = self._owner
         self._billed_s = 0.0
+        self._partial = None
         try:
             async with owner._provider.stream(  # pyright: ignore[reportPrivateUsage]
                 self._segment(first),
@@ -147,17 +166,45 @@ class _Stream(stt.RecognizeStream):
                 language_hint=owner._language_hint,  # pyright: ignore[reportPrivateUsage]
                 hotword_list_id=owner._hotword_list_id,  # pyright: ignore[reportPrivateUsage]
             ) as events:
-                async for event in events:
-                    self._handle(event)
-                    if event.kind == "final":
-                        self._report_usage(events.usage.audio_seconds if events.usage else 0.0)
+                deadline = asyncio.timeout(None)
+                self._deadline = deadline
+                try:
+                    async with deadline:
+                        async for event in events:
+                            self._handle(event)
+                            if event.kind == "final":
+                                self._report_usage(
+                                    events.usage.audio_seconds if events.usage else 0.0
+                                )
+                except TimeoutError:
+                    if not deadline.expired():  # 厂商自己的超时（ProviderTimeout）照常往外抛
+                        raise
+                    # 退出 async with 时关闭厂商流，适配器放弃这个任务
+                    log.warning("stt_final_wait_expired", wait_s=FLUSH_FINAL_WAIT_S)
+                    self._promote_partial()
+                finally:
+                    self._deadline = None
             if self._speaking:  # 本段只有 partial 没有 final：也算说完
                 self._speaking = False
                 self._send(stt.SpeechEventType.END_OF_SPEECH)
             # 最后一句之后的音频（含静音）也计费，任务结束时补报
             self._report_usage(events.usage.audio_seconds if events.usage else 0.0)
         except ProviderError as exc:
+            self._promote_partial()  # 任务失败也不丢已经识别出来的话
             raise to_api_error(exc) from exc
+
+    def _promote_partial(self) -> None:
+        partial, self._partial = self._partial, None
+        if partial is not None:
+            self._handle(
+                STTEvent(
+                    kind="final",
+                    text=partial.text,
+                    start_ms=partial.start_ms,
+                    end_ms=partial.end_ms,
+                    language=partial.language,
+                )
+            )
 
     def _handle(self, event: STTEvent) -> None:
         if not event.text and event.kind == "partial":
@@ -173,8 +220,10 @@ class _Stream(stt.RecognizeStream):
             end_time=event.end_ms / 1000 + offset,
         )
         if event.kind == "partial":
+            self._partial = event
             self._send(stt.SpeechEventType.INTERIM_TRANSCRIPT, data)
             return
+        self._partial = None
         self._send(stt.SpeechEventType.FINAL_TRANSCRIPT, data)
         self._speaking = False
         self._send(stt.SpeechEventType.END_OF_SPEECH)

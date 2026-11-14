@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import AsyncGenerator
+from typing import Any
 
 import pytest
 from livekit import rtc
@@ -12,12 +14,15 @@ from interview.db.models import Language
 from interview.providers.base import (
     AuthError,
     BadResponse,
+    GeneratorStream,
     ProviderTimeout,
     ProviderUnavailable,
     RateLimited,
     STTEvent,
+    STTUsage,
 )
 from interview.providers.fake import FakeSTT
+from interview.voice import stt_plugin
 from interview.voice.plugin_errors import to_api_error
 from interview.voice.stt_plugin import SAMPLE_RATE, ProviderSTT
 
@@ -166,3 +171,62 @@ async def test_flush_finalizes_at_once_and_next_audio_starts_a_new_task() -> Non
     # 每个任务各自计费：第一段 0.1 秒、第二段 0.2 秒，不重复也不遗漏
     assert len(durations) == 2
     assert durations == pytest.approx([0.1, 0.2], abs=0.02)
+
+
+class StuckSTT(FakeSTT):
+    """出一个中间结果后，音频结束（flush）也不给最终结果：卡住或报错。"""
+
+    def __init__(self, *, fail: bool = False) -> None:
+        super().__init__(provider="bailian", model="fun-asr-realtime")
+        self.fail = fail
+
+    def stream(self, audio: Any, **kwargs: Any) -> Any:
+        self.calls.append(kwargs)
+
+        async def body(stream: GeneratorStream[STTEvent, STTUsage]) -> AsyncGenerator[STTEvent]:
+            sent = False
+            async for _ in audio:
+                if not sent:
+                    sent = True
+                    yield STTEvent(
+                        kind="partial", text="I built an order system", start_ms=0, end_ms=900
+                    )
+            if self.fail:
+                raise ProviderTimeout("bailian/fun-asr-realtime: 发出 finish-task 后等待结果超时")
+            await asyncio.sleep(30)  # 厂商迟迟不返回最终结果
+            yield STTEvent(kind="final", text="too late", start_ms=0, end_ms=900)
+
+        return GeneratorStream(body)
+
+
+async def first_final(stream: Any) -> stt.SpeechEvent:
+    async with asyncio.timeout(5):
+        while True:
+            event = await anext(stream)
+            if event.type == Kind.FINAL_TRANSCRIPT:
+                return event
+
+
+async def test_flush_promotes_partial_when_final_is_late(monkeypatch: pytest.MonkeyPatch) -> None:
+    # PR-30 实测：长回答 flush 后 Fun-ASR 十几秒不返回，判定说完被拖到 6–10 秒
+    monkeypatch.setattr(stt_plugin, "FLUSH_FINAL_WAIT_S", 0.2)
+    stream = ProviderSTT(StuckSTT(), language=Language.EN).stream(conn_options=FAST)
+    for _ in range(5):
+        stream.push_frame(frame())
+    started = asyncio.get_running_loop().time()
+    stream.flush()
+    final = await first_final(stream)
+    assert final.alternatives[0].text == "I built an order system"
+    assert asyncio.get_running_loop().time() - started < 2  # 不等厂商的 10 秒超时
+    await stream.aclose()
+
+
+async def test_provider_error_keeps_what_was_heard() -> None:
+    # 任务失败时不丢话：先把中间结果当最终结果交出去，再让 LiveKit 重连
+    stream = ProviderSTT(StuckSTT(fail=True), language=Language.EN).stream(conn_options=FAST)
+    for _ in range(5):
+        stream.push_frame(frame())
+    stream.flush()
+    final = await first_final(stream)
+    assert final.alternatives[0].text == "I built an order system"
+    await stream.aclose()
