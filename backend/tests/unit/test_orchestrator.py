@@ -951,3 +951,30 @@ async def test_think_request_waits_silently_then_checks_in(make_harness: Any) ->
     assert state is not None and not state.waiting_for_thought
     assert state.last_directive is not None and state.last_directive.kind == "check_in"
     await harness.orchestrator.aclose()
+
+
+async def test_transition_does_not_wait_for_turn_write(make_harness: Any) -> None:
+    # PR-30 实测：经隧道写库要好几秒，过渡语排在写库后面，说完到开口 12 秒
+    harness = await make_harness(actions=["next_question"])
+    await open_to_deep(harness)
+    store = harness.orchestrator._store  # pyright: ignore[reportPrivateUsage]
+    original = store.append_turn
+    release = asyncio.Event()
+
+    async def slow_append(**kwargs: Any) -> uuid.UUID:
+        if kwargs["role"] is TurnRole.CANDIDATE:
+            await release.wait()
+        return await original(**kwargs)
+
+    store.append_turn = slow_append  # type: ignore[method-assign]
+    events = harness.orchestrator.on_user_turn(CANDIDATE_TEXT, 10_000, 20_000)
+    async with asyncio.timeout(2):
+        while not isinstance(event := await anext(events), InterviewerSentence):
+            pass
+    assert event.transition is True  # 写库还没完成，过渡语已经出来了
+    release.set()
+    rest = [e async for e in events]
+    assert events_of(rest, InterviewerDone)
+    turns = await fetch_turns(harness)
+    assert [t.role for t in turns[-2:]] == [TurnRole.CANDIDATE, TurnRole.INTERVIEWER]  # 顺序不乱
+    await harness.orchestrator.aclose()

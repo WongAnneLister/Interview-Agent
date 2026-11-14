@@ -154,8 +154,9 @@ class InterviewStore:
         question_id: str | None,
         start_ms: int,
         end_ms: int,
+        turn_id: uuid.UUID | None = None,
     ) -> uuid.UUID:
-        turn_id = uuid.uuid4()
+        turn_id = turn_id or uuid.uuid4()
         async with self._lock, self._sessionmaker() as session:
             seq = self._turn_seq + 1  # 在锁内分配，避免两次写入拿到同一个 seq
             TurnRepository(session, self._user_id).add(

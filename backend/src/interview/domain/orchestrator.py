@@ -211,6 +211,20 @@ class InterviewOrchestrator:
         turn_id = await self._store.append_turn(
             role=role, text=text, question_id=question_id, start_ms=start_ms, end_ms=end_ms
         )
+        self._remember_turn(turn_id, role, text, question_id, phase, start_ms, end_ms)
+        return turn_id
+
+    def _remember_turn(
+        self,
+        turn_id: uuid.UUID,
+        role: TurnRole,
+        text: str,
+        question_id: str | None,
+        phase: Phase,
+        start_ms: int,
+        end_ms: int,
+    ) -> None:
+        """内存里的对话历史和本题发言（面试官上下文、实时评估输入）。"""
         self._turns.append(TurnRecord(role=role, text=text, question_id=question_id, phase=phase))
         if question_id is not None:
             self._question_turns.setdefault(question_id, []).append(
@@ -222,7 +236,6 @@ class InterviewOrchestrator:
                     end_ms=end_ms,
                 )
             )
-        return turn_id
 
     async def _save_state(
         self,
@@ -420,14 +433,30 @@ class InterviewOrchestrator:
                     await self._record_ignored_turn(text, start_ms, end_ms)
                     return
                 question = self._current_question()
-                candidate_turn_id = await self._append_turn(
-                    role=TurnRole.CANDIDATE,
-                    text=text,
-                    question_id=state.current_question_id,
-                    phase=state.phase,
-                    start_ms=start_ms,
-                    end_ms=end_ms,
+                # 写库放到后台：经隧道的开发库一次写入要好几秒，原来过渡语要等它写完才说
+                # （PR-30 实测说完到开口 12 秒）。先记进内存（评估要用），面试官正式回答前再等写完，
+                # 保证转写顺序；评估结果落库也等这一轮写完（外键）。
+                candidate_turn_id = uuid.uuid4()
+                self._remember_turn(
+                    candidate_turn_id,
+                    TurnRole.CANDIDATE,
+                    text,
+                    state.current_question_id,
+                    state.phase,
+                    start_ms,
+                    end_ms,
                 )
+                saved = asyncio.create_task(
+                    self._store.append_turn(
+                        role=TurnRole.CANDIDATE,
+                        text=text,
+                        question_id=state.current_question_id,
+                        start_ms=start_ms,
+                        end_ms=end_ms,
+                        turn_id=candidate_turn_id,
+                    )
+                )
+                self._track(saved)
                 # 明确的“请再说一遍 / 我想一下”不交给评估：评估失败或超时会按换题降级，
                 # 题目就被跳过了（C33）。照样记进转写，由状态机直接重复题目或进入等待（PR-30）
                 shortcut: Command | Think | None = None
@@ -436,6 +465,7 @@ class InterviewOrchestrator:
                 elif is_think_request(text, self._config.keywords):
                     shortcut = Think(now_ms=end_ms)
                 if shortcut is not None:
+                    await saved
                     intent = "repeat" if isinstance(shortcut, Command) else "think"
                     span.span.set_attribute("turn.intent", intent)
                     with span.activate():
@@ -482,6 +512,7 @@ class InterviewOrchestrator:
                     track=self._track,
                     span=span,
                     evaluation=evaluation,
+                    turn_saved=saved,
                 )
 
                 transition = ""
@@ -489,6 +520,7 @@ class InterviewOrchestrator:
                     transition = self._picker.pick()
                     yield InterviewerSentence(text=transition, transition=True)
 
+                await saved
                 decision = await background.decide(self._config.eval_wait_s)
                 with span.activate():
                     step = machine_step(

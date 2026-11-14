@@ -66,9 +66,11 @@ class TurnBackground:
         track: Callable[[asyncio.Task[Any]], None],
         span: OpenSpan,
         evaluation: tuple[LLMProvider, EvaluationInput, uuid.UUID] | None,
+        turn_saved: asyncio.Future[Any] | None = None,
     ) -> None:
         self._interview_id = interview_id
         self._store = store
+        self._turn_saved = turn_saved  # 候选人这一轮落库后才能写评估（外键）
         self._span = span
         self._started = time.perf_counter()
         self._eval: asyncio.Task[EvaluationResult] | None = None
@@ -167,6 +169,8 @@ class TurnBackground:
             )
             return
         try:
+            if self._turn_saved is not None:
+                await self._turn_saved
             await self._store.write_evaluation(result, turn_id)
         except Exception as exc:
             log.warning(
