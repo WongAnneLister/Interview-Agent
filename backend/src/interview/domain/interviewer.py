@@ -15,9 +15,9 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from interview.db.models import InterviewStyle, Language, TurnRole, UsageRole
 from interview.domain.state_machine import Directive, Phase, Reason
-from interview.observability.tracing import open_span
+from interview.observability.tracing import OpenSpan, open_span
 from interview.prompts.loader import get_prompt_library
-from interview.providers.base import ChatMessage, LLMProvider
+from interview.providers.base import ChatMessage, LLMProvider, LLMStream
 
 MAX_HISTORY_TURNS = 12
 MAX_SENTENCE_CHARS = 60
@@ -31,6 +31,22 @@ _ABBREVIATION = re.compile(r"(?:mr|mrs|dr|e\.g|i\.e|vs|etc)\.$", re.IGNORECASE)
 _LINK = re.compile(r"\[([^\]]+)\]\([^)]*\)")
 _HEADING = re.compile(r"(?m)^[ \t]*#{1,6}[ \t]*")
 _LIST = re.compile(r"(?m)^[ \t]*(?:[-*•]|\d+[.)])[ \t]+")
+_HAN = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff]")
+_LATIN = re.compile(r"[A-Za-z]")
+
+# 英文面试里模型偶尔整句说中文（PR-30 实测开场整段中文）：第一句就跑偏时带上这条重新生成一次
+ENGLISH_ONLY = "Reply in English only. Do not use any Chinese."
+# 重新生成后仍然没有一句英文时，按指令种类说的兜底话（ask 的题目原文另由代码念出）
+_EN_FALLBACK: Mapping[str, str] = {
+    "opening": (
+        "Hi, I'm your AI interviewer today. We'll start with a short self-introduction, "
+        "then go through a few questions. Are you ready?"
+    ),
+    "check_in": "Take your time. Would you like a hint, or shall we move on?",
+    "pause": "Sure, let's pause here. Just tell me when you're ready to continue.",
+    "closing": "Thank you for your time today. Your report will be ready shortly. Goodbye.",
+}
+_EN_DEFAULT_FALLBACK = "Could you tell me a bit more about that?"
 
 _PHASE_LABELS: Mapping[Phase, str] = {
     Phase.OPENING: "开场",
@@ -153,6 +169,18 @@ def _task_text(directive: Directive) -> str:
             )
         return _with_reason("把上一条内容换个说法再说一遍。", directive.reason)
     return _with_reason(_base_task(directive), directive.reason)
+
+
+def is_mostly_chinese(text: str) -> bool:
+    """按字数比较汉字和英文字母（一个汉字约等于一个词）：英文句里夹公司名之类的中文不算。"""
+    return len(_HAN.findall(text)) * 2 > len(_LATIN.findall(text))
+
+
+def english_fallback(directive: Directive) -> str | None:
+    kind = directive.repeat_of if directive.kind == "repeat" else directive.kind
+    if kind == "ask":
+        return None  # 只缺一句过渡语，题目照样念
+    return _EN_FALLBACK.get(kind or "", _EN_DEFAULT_FALLBACK)
 
 
 def clean_output(text: str) -> str:
@@ -280,9 +308,12 @@ class Utterance:
         interview_id: uuid.UUID,
         kind: str,
         language: Language,
+        fallback: str | None = None,
     ) -> None:
         self._llm = llm
         self._messages = list(messages)
+        self._english = language == Language.EN
+        self._fallback = fallback
         self._interview_id = interview_id
         self._kind = kind
         self._separator = " " if language == Language.EN else ""
@@ -339,7 +370,6 @@ class Utterance:
 
     async def _run(self) -> AsyncGenerator[str, None]:
         started = time.perf_counter()
-        splitter = SentenceSplitter()
         span = open_span(
             "interviewer.speak",
             interview_id=str(self._interview_id),
@@ -348,38 +378,31 @@ class Utterance:
         current = span.span
         error: BaseException | None = None
         try:
-            with span.activate():
-                stream = self._llm.stream_chat(
-                    self._messages,
-                    max_tokens=200,
-                    temperature=0.7,
-                    extra=None,
-                )
-            async with stream:
-                while True:
-                    with span.activate():
-                        try:
-                            chunk = await anext(stream)
-                        except StopAsyncIteration:
-                            break
-                    for sentence in splitter.feed(chunk):
-                        cleaned = clean_output(sentence)
-                        if not cleaned:
+            messages = self._messages
+            for attempt in range(2):
+                retry = False
+                with span.activate():
+                    stream = self._llm.stream_chat(
+                        messages, max_tokens=200, temperature=0.7, extra=None
+                    )
+                async with stream, contextlib.aclosing(self._sentences_of(stream, span)) as found:
+                    async for sentence in found:
+                        if self._english and is_mostly_chinese(sentence):
+                            if not self._parts and attempt == 0:
+                                retry = True
+                                break
+                            self._wrong_language("dropped")
                             continue
-                        self._parts.append(cleaned)
-                        self._sentences += 1
-                        if self._first_sentence_ms is None:
-                            self._first_sentence_ms = (time.perf_counter() - started) * 1000
-                        yield cleaned
-            for sentence in splitter.flush():
-                cleaned = clean_output(sentence)
-                if not cleaned:
-                    continue
-                self._parts.append(cleaned)
-                self._sentences += 1
-                if self._first_sentence_ms is None:
-                    self._first_sentence_ms = (time.perf_counter() - started) * 1000
-                yield cleaned
+                        self._keep(sentence, started)
+                        yield sentence
+                if not retry:
+                    break
+                self._wrong_language("retried")
+                messages = [*self._messages, ChatMessage(role="user", content=ENGLISH_ONLY)]
+            if not self._parts and self._fallback is not None:
+                self._wrong_language("fallback")
+                self._keep(self._fallback, started)
+                yield self._fallback
         except (asyncio.CancelledError, GeneratorExit):
             self._cancelled = True
             raise
@@ -403,6 +426,31 @@ class Utterance:
                 first_sentence_ms=self._first_sentence_ms,
                 cancelled=self._cancelled,
             )
+
+    async def _sentences_of(self, stream: LLMStream, span: OpenSpan) -> AsyncGenerator[str, None]:
+        splitter = SentenceSplitter()
+        while True:
+            with span.activate():
+                try:
+                    chunk = await anext(stream)
+                except StopAsyncIteration:
+                    break
+            for sentence in splitter.feed(chunk):
+                if cleaned := clean_output(sentence):
+                    yield cleaned
+        for sentence in splitter.flush():
+            if cleaned := clean_output(sentence):
+                yield cleaned
+
+    def _keep(self, sentence: str, started: float) -> None:
+        self._parts.append(sentence)
+        self._sentences += 1
+        if self._first_sentence_ms is None:
+            self._first_sentence_ms = (time.perf_counter() - started) * 1000
+
+    def _wrong_language(self, action: str) -> None:
+        # 只记动作，不记台词原文（日志不出现对话内容）
+        log.warning("interviewer_wrong_language", kind=self._kind, action=action)
 
 
 def _is_opening(directive: Directive) -> bool:
@@ -438,4 +486,5 @@ def speak(llm: LLMProvider, data: InterviewerInput, *, interview_id: uuid.UUID) 
         interview_id=interview_id,
         kind=data.directive.kind,
         language=data.language,
+        fallback=english_fallback(data.directive) if data.language == Language.EN else None,
     )

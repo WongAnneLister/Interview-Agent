@@ -1,6 +1,6 @@
 ---
 id: interviewer
-version: 2
+version: 3
 description: 按状态机指令生成前台面试官要说的话
 role: front
 ---
@@ -20,3 +20,5 @@ role: front
 
 最近的对话：
 {{ history | as_data("history") }}
+{% if language == "en" %}
+Reply in English only, even if the history above contains Chinese.{% endif %}

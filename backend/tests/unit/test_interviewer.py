@@ -16,6 +16,7 @@ from test_api import make_settings
 
 from interview.db.models import InterviewStyle, Language, TurnRole, UsageRole
 from interview.domain.interviewer import (
+    ENGLISH_ONLY,
     MAX_HISTORY_TURNS,
     MAX_SENTENCE_CHARS,
     TRANSITIONS,
@@ -26,6 +27,8 @@ from interview.domain.interviewer import (
     _task_text,
     appended_question,
     clean_output,
+    english_fallback,
+    is_mostly_chinese,
     speak,
 )
 from interview.domain.state_machine import Directive, DirectiveKind, Phase, Reason
@@ -521,7 +524,7 @@ def test_system_prompt_requires_handing_back_the_turn() -> None:
         "interviewer", task="t", history="", style="gentle", language="zh"
     )
     assert "把话轮交还候选人" in prompt.messages[0]["content"]
-    assert prompt.version == 2
+    assert prompt.version >= 2
 
 
 def test_transitions_are_neutral_acknowledgements() -> None:
@@ -530,3 +533,62 @@ def test_transitions_are_neutral_acknowledgements() -> None:
     for styles in TRANSITIONS.values():
         for lines in styles.values():
             assert not {"Go on.", "Keep going.", "继续。", "继续说。"} & set(lines)
+
+
+def en_input(kind: DirectiveKind = "follow_up") -> InterviewerInput:
+    phase = Phase.OPENING if kind == "opening" else Phase.TECHNICAL
+    return make_input(directive(kind, phase), language=Language.EN)
+
+
+async def test_english_interview_retries_when_reply_starts_in_chinese() -> None:
+    # PR-30 实测：英文面试的开场整段说成了中文
+    replies = iter(["你好，我是今天的面试官。我们开始吧。", "Hi there. Are you ready?"])
+    llm = FakeLLM(reply=lambda _: next(replies), chunk_size=100)
+    utterance = speak(llm, en_input("opening"), interview_id=INTERVIEW_ID)
+    assert [sentence async for sentence in utterance] == ["Hi there.", "Are you ready?"]
+    assert len(llm.calls) == 2
+    assert llm.calls[1]["messages"][-1]["content"] == ENGLISH_ONLY
+
+
+async def test_english_interview_drops_chinese_sentences_after_speaking() -> None:
+    llm = FakeLLM(reply="Good point. 你能再展开说说吗？What was the hardest part?")
+    utterance = speak(llm, en_input(), interview_id=INTERVIEW_ID)
+    assert [s async for s in utterance] == ["Good point.", "What was the hardest part?"]
+    assert len(llm.calls) == 1
+
+
+async def test_english_interview_falls_back_when_retry_is_still_chinese() -> None:
+    llm = FakeLLM(reply="你好，我是面试官。", chunk_size=100)
+    utterance = speak(llm, en_input("opening"), interview_id=INTERVIEW_ID)
+    assert [s async for s in utterance] == [english_fallback(directive("opening", Phase.OPENING))]
+    assert len(llm.calls) == 2
+
+
+async def test_ask_has_no_fallback_since_question_is_read_anyway() -> None:
+    assert english_fallback(directive("ask", Phase.TECHNICAL)) is None
+    llm = FakeLLM(reply="好的。", chunk_size=100)
+    utterance = speak(llm, en_input("ask"), interview_id=INTERVIEW_ID)
+    assert [s async for s in utterance] == []
+
+
+@pytest.mark.parametrize(
+    ("text", "chinese"),
+    [
+        ("你好，我是今天的面试官。", True),
+        ("Tell me about your time at 字节跳动.", False),
+        ("Have you used 消息队列 in production?", False),
+        ("Okay.", False),
+    ],
+)
+def test_is_mostly_chinese(text: str, chinese: bool) -> None:
+    assert is_mostly_chinese(text) is chinese
+
+
+async def test_chinese_interview_is_not_filtered_and_prompt_reminds_english_only_in_en() -> None:
+    llm = FakeLLM(reply="我们聊聊 Kubernetes。", chunk_size=100)
+    utterance = speak(llm, make_input(), interview_id=INTERVIEW_ID)
+    assert [s async for s in utterance] == ["我们聊聊 Kubernetes。"]
+    assert "Reply in English only" not in llm.calls[0]["messages"][-1]["content"]
+    english = FakeLLM(reply="Okay.", chunk_size=100)
+    _ = [s async for s in speak(english, en_input(), interview_id=INTERVIEW_ID)]
+    assert "Reply in English only" in english.calls[0]["messages"][-1]["content"]
