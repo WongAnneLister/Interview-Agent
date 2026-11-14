@@ -130,13 +130,13 @@ make livekit         # 启动（前台运行）；首次会生成 LIVEKIT_API_KE
 
 ### 语音面试（本机）
 
-浏览器入房后，LiveKit 按 token 里的派发把任务交给语音 worker。现在的 worker 是回声测试：进房先说一句提示语，之后你每说完一句，它就用合成声音复述识别到的文字。启动顺序（各开一个终端）：
+浏览器入房后，LiveKit 按 token 里的派发把任务交给语音 worker，由它跑面试：先说一句“AI 面试官、全程录音”的声明和开场，你每答完一轮，面试官先说一句过渡语，再追问或换题（边生成边说）。收尾语说完后房间自动关闭，报告在 worker 里生成，到报告页查看。这一版面试官说话时不能打断（PR-31）。启动顺序（各开一个终端）：
 
 ```bash
 make tunnel    # 数据库（worker 写用量）
 make livekit   # 本机 LiveKit Server
 make api       # 签发入房 token
-make worker    # 语音 worker；第一次启动会加载 Silero VAD
+make worker    # 语音 worker；第一次启动会加载 Silero VAD；改了 worker 代码要重启
 make web-dev   # 前端，在计划页点“开始语音面试”
 ```
 

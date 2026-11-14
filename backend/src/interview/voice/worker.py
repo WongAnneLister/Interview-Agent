@@ -4,59 +4,161 @@
   LiveKit 地址和密钥取自配置，不依赖环境变量。CLI 入口在 voice/main.py，
   本模块导入时没有副作用，单元测试可以直接导入。
 - prewarm() 在每个空闲进程里提前加载 Silero VAD、配置日志和链路追踪。
-- entrypoint() 每场面试一个进程：解析派发 metadata，绑定 interview_id 到日志上下文，
-  用我们的识别 / 合成插件建 AgentSession。现在跑的是回声 agent：候选人说完一句，
-  就用合成声音复述识别到的文字（PR-28 验收用，PR-29 换成面试编排）。
+- entrypoint() 每场面试一个进程：解析派发 metadata，加载面试编排器，
+  InterviewAgent 把候选人每一轮的最终转写交给 VoiceDriver（voice/driver.py），
+  编排器吐出的句子经我们的合成插件说出来；不用 LiveKit 自带的大模型调用。
+- 面试结束：driver 返回后 ctx.shutdown()，会话关闭并删除房间，候选人随之断开；
+  on_session_end 钩子（会话关闭后、进程退出前，有 session_end_timeout）等报告写完。
+  候选人中途离开：driver 被取消时 checkpoint() 存档，面试保持 in_progress（续面见 PR-39）。
+- 这一版面试官说话时不能打断（allow_interruptions=False），候选人插话会被丢弃，
+  历史记录与实际播出一致；打断见 PR-31。
 - 优雅退出由 LiveKit CLI 完成（非 dev 模式）：收到停止信号后不再接新任务，
   最多等 drain_timeout_s 让进行中的面试结束。
+
+livekit-agents 的 Agent / AgentSession 签名里有未指定类型参数的泛型（STT[Unknown] 等），
+严格模式下调用它们的几处只能逐行忽略 reportUnknownMemberType。
 """
 
 from __future__ import annotations
 
+import asyncio
+from collections.abc import AsyncIterator, Callable
+from dataclasses import dataclass
+
 import structlog
-from livekit.agents import Agent, AgentServer, AgentSession, JobContext, JobProcess, llm
+from livekit.agents import (
+    Agent,
+    AgentServer,
+    AgentSession,
+    JobContext,
+    JobProcess,
+    UserStateChangedEvent,
+    llm,
+    room_io,
+    utils,
+)
+from livekit.agents.voice import SpeechHandle
 from livekit.plugins import silero
 from pydantic import ValidationError
 
 from interview.config import Settings, get_settings
-from interview.db.models import Language, UsageRole
+from interview.db.models import UsageRole
 from interview.db.session import create_engine, make_sessionmaker
+from interview.domain.orchestrator import InterviewOrchestrator
+from interview.domain.orchestrator_store import InterviewNotFound
+from interview.domain.report import ReportRunner, request_report
+from interview.domain.state_machine import Phase
 from interview.logging import configure_logging
 from interview.observability.tracing import init_tracing
 from interview.providers.observed import CallContext
 from interview.providers.registry import ProviderRegistry
+from interview.voice.driver import Playout, SentenceSink, SessionClock, Speaker, VoiceDriver
 from interview.voice.session import DispatchMetadata
 from interview.voice.stt_plugin import ProviderSTT
 from interview.voice.tts_plugin import ProviderTTS
 
 log = structlog.get_logger(__name__)
 
-GREETINGS = {
-    Language.ZH: "回声测试已连接，请说一句话，我会复述给你听。",
-    Language.EN: "Echo test connected. Say something and I will repeat it.",
-}
+# 报告生成之外再给的余量（秒）：存档、等用量写库
+SESSION_END_MARGIN_S = 60
 
 
-class EchoAgent(Agent):
-    """把识别结果原样说回去，用来验证 识别 → 合成 整条链路。
+class _HandlePlayout:
+    def __init__(self, handle: SpeechHandle) -> None:
+        self._handle = handle
 
-    livekit-agents 的 Agent / AgentSession 签名里有未指定类型参数的泛型（STT[Unknown] 等），
-    严格模式下下面几处只能逐行忽略 reportUnknownMemberType。
-    """
+    async def wait(self) -> None:
+        await self._handle.wait_for_playout()
 
-    def __init__(self, language: Language) -> None:
-        super().__init__(instructions="echo")  # pyright: ignore[reportUnknownMemberType]
-        self._language = language
+
+class _QueueSink:
+    """一段边生成边说的话：句子进队列，session.say() 从队列里读。"""
+
+    def __init__(self, session: AgentSession[None]) -> None:
+        self._queue: asyncio.Queue[str | None] = asyncio.Queue()
+        self._handle = session.say(  # pyright: ignore[reportUnknownMemberType]
+            self._texts(), allow_interruptions=False
+        )
+
+    async def _texts(self) -> AsyncIterator[str]:
+        while (sentence := await self._queue.get()) is not None:
+            yield sentence
+
+    def push(self, sentence: str) -> None:
+        self._queue.put_nowait(sentence)
+
+    def close(self) -> Playout:
+        self._queue.put_nowait(None)
+        return _HandlePlayout(self._handle)
+
+
+class LiveKitSpeaker:
+    def __init__(self, session: AgentSession[None]) -> None:
+        self._session = session
+
+    def say(self, text: str) -> Playout:
+        handle = self._session.say(  # pyright: ignore[reportUnknownMemberType]
+            text, allow_interruptions=False
+        )
+        return _HandlePlayout(handle)
+
+    def stream(self) -> SentenceSink:
+        return _QueueSink(self._session)
+
+
+class InterviewAgent(Agent):
+    def __init__(
+        self,
+        clock: SessionClock,
+        *,
+        make_driver: Callable[[Speaker], VoiceDriver],
+        on_ended: Callable[[], None],
+    ) -> None:
+        super().__init__(instructions="interview")  # pyright: ignore[reportUnknownMemberType]
+        self._clock = clock
+        self._make_driver = make_driver
+        self._on_ended = on_ended
+        self._driver: VoiceDriver | None = None
+        self._task: asyncio.Task[None] | None = None
+        self._speech_started_ms: int | None = None
 
     async def on_enter(self) -> None:
-        self.session.say(GREETINGS[self._language])  # pyright: ignore[reportUnknownMemberType]
+        session: AgentSession[None] = self.session  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+        session.on("user_state_changed", self._on_user_state)  # pyright: ignore[reportUnknownMemberType]
+        self._driver = self._make_driver(LiveKitSpeaker(session))
+        self._task = asyncio.create_task(self._drive(self._driver), name="voice_driver")
+
+    async def _drive(self, driver: VoiceDriver) -> None:
+        if await driver.run():
+            self._on_ended()
+
+    def _on_user_state(self, event: UserStateChangedEvent) -> None:
+        if event.new_state == "speaking" and self._speech_started_ms is None:
+            self._speech_started_ms = self._clock.at(event.created_at)
 
     async def on_user_turn_completed(
         self, turn_ctx: llm.ChatContext, new_message: llm.ChatMessage
     ) -> None:
         text = (new_message.text_content or "").strip()
-        if text:
-            self.session.say(text)  # pyright: ignore[reportUnknownMemberType]
+        started, self._speech_started_ms = self._speech_started_ms, None
+        if not text or self._driver is None:
+            return
+        end_ms = self._clock.now_ms()
+        # 交给 driver 就返回：评估和面试官生成在 driver 里跑，不挡住框架处理下一轮
+        self._driver.user_turn(text, end_ms if started is None else started, end_ms)
+
+    async def stop(self) -> None:
+        """会话结束后调用：取消还在跑的 driver，等它存档（driver 的 finally）。"""
+        if self._task is not None and not self._task.done():
+            await utils.aio.cancel_and_wait(self._task)
+
+
+@dataclass
+class _JobState:
+    """一个任务进程里 on_session_end 要收尾的对象（一个进程只跑一场面试）。"""
+
+    agent: InterviewAgent | None
+    reports: ReportRunner
 
 
 def build_server(settings: Settings) -> AgentServer:
@@ -68,8 +170,9 @@ def build_server(settings: Settings) -> AgentServer:
         setup_fnc=prewarm,
         num_idle_processes=livekit.worker_idle_processes,
         drain_timeout=livekit.drain_timeout_s,
+        session_end_timeout=settings.report.total_timeout_s + SESSION_END_MARGIN_S,
     )
-    server.rtc_session(entrypoint, agent_name=livekit.agent_name)
+    server.rtc_session(entrypoint, agent_name=livekit.agent_name, on_session_end=on_session_end)
     return server
 
 
@@ -80,6 +183,15 @@ def prewarm(proc: JobProcess) -> None:
         "worker", settings.observability, settings.langfuse, environment=settings.app.app_env
     )
     proc.userdata["vad"] = silero.VAD.load()
+
+
+async def on_session_end(ctx: JobContext) -> None:
+    job = ctx.proc.userdata.pop("job", None)
+    if not isinstance(job, _JobState):
+        return
+    if job.agent is not None:
+        await job.agent.stop()
+    await job.reports.aclose()  # 面试结束时启动的报告：等它写完（最长 REPORT_TOTAL_TIMEOUT_S）
 
 
 async def entrypoint(ctx: JobContext) -> None:
@@ -94,13 +206,38 @@ async def entrypoint(ctx: JobContext) -> None:
 
     settings = get_settings()
     engine = create_engine(settings.db.url.get_secret_value(), db=settings.db)
-    registry = ProviderRegistry(settings.providers, sessionmaker=make_sessionmaker(engine))
+    sessionmaker = make_sessionmaker(engine)
+    registry = ProviderRegistry(settings.providers, sessionmaker=sessionmaker)
+    job = _JobState(agent=None, reports=ReportRunner(sessionmaker, registry, settings.report))
+    ctx.proc.userdata["job"] = job
 
     async def close() -> None:
         await registry.aclose()  # 先等后台用量写完
         await engine.dispose()
 
     ctx.add_shutdown_callback(close)
+
+    async def on_ended(interview_id: object) -> None:
+        await request_report(meta.interview_id, user_id=meta.user_id, runner=job.reports)
+
+    try:
+        orchestrator = await InterviewOrchestrator.load(
+            interview_id=meta.interview_id,
+            user_id=meta.user_id,
+            sessionmaker=sessionmaker,
+            providers=registry,
+            on_ended=on_ended,
+        )
+    except InterviewNotFound:
+        log.error("voice_interview_not_found")
+        ctx.shutdown("interview not found")
+        return
+    state = orchestrator.state
+    if state is not None and state.phase is Phase.ENDED:
+        await orchestrator.checkpoint()  # 上次进入 ended 后没来得及收尾：补做
+        await orchestrator.aclose()
+        ctx.shutdown("interview already ended")
+        return
 
     def call(role: UsageRole) -> CallContext:
         return CallContext(user_id=meta.user_id, interview_id=meta.interview_id, usage_role=role)
@@ -115,9 +252,35 @@ async def entrypoint(ctx: JobContext) -> None:
     stt.prewarm()
     tts.prewarm()
 
-    session = AgentSession[None](vad=ctx.proc.userdata["vad"], stt=stt, tts=tts)
+    clock = SessionClock(state.clock_ms if state is not None else 0)
+    job.agent = InterviewAgent(
+        clock,
+        make_driver=lambda speaker: VoiceDriver(
+            orchestrator,
+            speaker,
+            clock,
+            language=meta.language,
+            tick_interval_s=settings.app.ws_tick_interval_s,
+        ),
+        on_ended=lambda: ctx.shutdown("interview ended"),
+    )
+    session = AgentSession[None](
+        vad=ctx.proc.userdata["vad"],
+        stt=stt,
+        tts=tts,
+        # 口语规范化（speech_text）已经去掉 markdown；框架的 markdown 过滤在流式文本里会先压住片段
+        tts_text_transforms=["filter_emoji"],
+    )
     # record=False：录音按 PR-34 存我们自己的对象存储，不交给框架
     await session.start(  # pyright: ignore[reportUnknownMemberType]
-        EchoAgent(meta.language), room=ctx.room, record=False
+        job.agent,
+        room=ctx.room,
+        room_options=room_io.RoomOptions(delete_room_on_close=True),
+        record=False,
     )
-    log.info("voice_session_started", room=ctx.room.name, language=meta.language.value)
+    log.info(
+        "voice_session_started",
+        room=ctx.room.name,
+        language=meta.language.value,
+        resumed=state is not None,
+    )
