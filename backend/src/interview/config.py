@@ -96,6 +96,9 @@ class LiveKitSettings(BaseSettings):
     worker_idle_processes: int = Field(default=1, ge=0)
     # worker 收到停止信号后等进行中的面试结束的最长时间（秒）：最长 30 分钟的面试加余量
     drain_timeout_s: int = Field(default=2400, gt=0)
+    # 候选人停顿多久算说完这一轮（秒）。框架默认 0.5 秒，
+    # 开放回答里的正常停顿就会被抢话（PR-29 实测）；PR-30 会按题型动态调整
+    endpointing_min_delay_s: float = Field(default=1.5, gt=0, le=10)
 
 
 class S3Settings(BaseSettings):

@@ -134,3 +134,13 @@ def test_reply_latency_is_logged_from_when_the_candidate_stopped() -> None:
         agent._on_agent_state(MagicMock(new_state="speaking", created_at=203.0))  # pyright: ignore[reportPrivateUsage]
     replies = [e for e in logs if e["event"] == "voice_reply_started"]
     assert [e["since_user_stopped_ms"] for e in replies] == [850]  # 同一轮只记第一次开口
+
+
+def test_turn_handling_waits_for_configured_pause() -> None:
+    from interview.voice.worker import turn_handling
+
+    settings = make_settings()
+    assert settings.livekit.endpointing_min_delay_s == 1.5  # 默认不在 0.5 秒的停顿处抢话
+    assert turn_handling(settings).get("endpointing") == {"min_delay": 1.5, "max_delay": 3.0}
+    settings.livekit.endpointing_min_delay_s = 4.0
+    assert turn_handling(settings).get("endpointing") == {"min_delay": 4.0, "max_delay": 4.0}

@@ -34,6 +34,7 @@ from livekit.agents import (
     AgentStateChangedEvent,
     JobContext,
     JobProcess,
+    TurnHandlingOptions,
     UserStateChangedEvent,
     llm,
     room_io,
@@ -173,6 +174,14 @@ class InterviewAgent(Agent):
             await utils.aio.cancel_and_wait(self._task)
 
 
+def turn_handling(settings: Settings) -> TurnHandlingOptions:
+    """候选人停顿多久算说完：框架默认 0.5 秒会在回答中途抢话，用配置值（默认 1.5 秒）。"""
+    min_delay = settings.livekit.endpointing_min_delay_s
+    return TurnHandlingOptions(
+        endpointing={"min_delay": min_delay, "max_delay": max(3.0, min_delay)}
+    )
+
+
 @dataclass
 class _JobState:
     """一个任务进程里 on_session_end 要收尾的对象（一个进程只跑一场面试）。"""
@@ -288,6 +297,7 @@ async def entrypoint(ctx: JobContext) -> None:
         vad=ctx.proc.userdata["vad"],
         stt=stt,
         tts=tts,
+        turn_handling=turn_handling(settings),
         # 口语规范化（speech_text）已经去掉 markdown；框架的 markdown 过滤在流式文本里会先压住片段
         tts_text_transforms=["filter_emoji"],
     )
