@@ -145,3 +145,12 @@ export function getTranscript(id: string, signal?: AbortSignal) {
     }),
   );
 }
+
+export function createVoiceSession(id: string, signal?: AbortSignal) {
+  return request(TIMEOUT_MS.standard, signal, combined =>
+    client.POST("/api/interviews/{interview_id}/session", {
+      params: { path: { interview_id: id } },
+      signal: combined,
+    }),
+  );
+}

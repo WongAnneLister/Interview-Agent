@@ -12,6 +12,7 @@
     "gen-types": "openapi-typescript openapi.json -o src/lib/api/schema.d.ts"
   },
   "dependencies": {
+    "livekit-client": "^2.24.0",
     "next": "16.4.5",
     "openapi-fetch": "^0.17.0",
     "react": "19.3.0",
