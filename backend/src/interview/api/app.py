@@ -29,6 +29,7 @@ from interview.api.routes.jd import router as jd_router
 from interview.api.routes.resumes import router as resumes_router
 from interview.api.routes.text_ws import openapi_schemas
 from interview.api.routes.text_ws import router as text_ws_router
+from interview.api.routes.voice import router as voice_router
 from interview.api.upload_limit import ResumeUploadGuard
 from interview.config import Settings, get_settings
 from interview.logging import configure_logging
@@ -85,6 +86,7 @@ def create_app(
     app.include_router(jd_router)
     app.include_router(interviews_router)
     app.include_router(text_ws_router)
+    app.include_router(voice_router)
     app.extra_schemas = openapi_schemas()
     mount_metrics(app, enabled=observability)
     instrument_fastapi(app, enabled=observability)

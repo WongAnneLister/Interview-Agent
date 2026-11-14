@@ -85,9 +85,13 @@ class RedisSettings(BaseSettings):
 class LiveKitSettings(BaseSettings):
     model_config = _config("LIVEKIT_")
 
-    url: str
+    url: str  # 浏览器与 worker 都用它连 LiveKit（v0 都在本机）
     api_key: SecretStr
     api_secret: SecretStr
+    # 语音 worker 注册的名字；入房 token 里按这个名字显式派发 agent
+    agent_name: str = "interview-agent"
+    # 候选人入房 token 的有效期（秒）：只用于建立连接，入房后过期不影响通话
+    token_ttl_s: int = Field(default=600, gt=0, le=3600)
 
 
 class S3Settings(BaseSettings):

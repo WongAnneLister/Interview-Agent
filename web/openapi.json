@@ -1450,6 +1450,40 @@
         "title": "ValidationError",
         "type": "object"
       },
+      "VoiceSessionOut": {
+        "properties": {
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "identity": {
+            "title": "Identity",
+            "type": "string"
+          },
+          "room": {
+            "title": "Room",
+            "type": "string"
+          },
+          "token": {
+            "title": "Token",
+            "type": "string"
+          },
+          "url": {
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "url",
+          "token",
+          "room",
+          "identity",
+          "expires_at"
+        ],
+        "title": "VoiceSessionOut",
+        "type": "object"
+      },
       "WorkItem": {
         "properties": {
           "company": {
@@ -1716,6 +1750,49 @@
         "summary": "Create Report",
         "tags": [
           "interviews"
+        ]
+      }
+    },
+    "/api/interviews/{interview_id}/session": {
+      "post": {
+        "operationId": "create_voice_session_api_interviews__interview_id__session_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "interview_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Interview Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VoiceSessionOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Voice Session",
+        "tags": [
+          "voice"
         ]
       }
     },
