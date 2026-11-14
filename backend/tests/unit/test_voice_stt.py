@@ -99,6 +99,7 @@ async def test_unfinished_sentence_still_ends_speech() -> None:
         Kind.START_OF_SPEECH,
         Kind.INTERIM_TRANSCRIPT,
         Kind.END_OF_SPEECH,
+        Kind.RECOGNITION_USAGE,  # 没有最终结果的音频也计费
     ]
 
 
@@ -137,3 +138,31 @@ async def test_prewarm_warms_provider_and_identifies_it() -> None:
     assert fake.warmups == 1
     assert (plugin.provider, plugin.model) == ("bailian", "fun-asr-realtime")
     await plugin.aclose()
+
+
+async def test_flush_finalizes_at_once_and_next_audio_starts_a_new_task() -> None:
+    # VAD 判定候选人停下时 AgentSession 调用 flush()：当前任务马上结束并给出最终结果（C8）
+    fake = FakeSTT(EVENTS[2:3], frames_per_event=1000)  # 只在音频结束时出 final
+    plugin = ProviderSTT(fake, language=Language.ZH)
+    stream = plugin.stream(conn_options=FAST)
+    for _ in range(10):
+        stream.push_frame(frame())
+    stream.flush()
+    first: list[stt.SpeechEvent] = []
+    async with asyncio.timeout(2):  # 不等后面的音频就拿到最终结果
+        while not any(e.type == Kind.FINAL_TRANSCRIPT for e in first):
+            first.append(await anext(stream))
+    for _ in range(20):
+        stream.push_frame(frame())
+    stream.end_input()
+    rest = [event async for event in stream]
+    await stream.aclose()
+
+    assert len(fake.calls) == 2  # 两段话，两个厂商任务
+    finals = [e for e in [*first, *rest] if e.type == Kind.FINAL_TRANSCRIPT]
+    assert len(finals) == 2
+    usage = [e.recognition_usage for e in [*first, *rest] if e.type == Kind.RECOGNITION_USAGE]
+    durations = [u.audio_duration for u in usage if u is not None]
+    # 每个任务各自计费：第一段 0.1 秒、第二段 0.2 秒，不重复也不遗漏
+    assert len(durations) == 2
+    assert durations == pytest.approx([0.1, 0.2], abs=0.02)
