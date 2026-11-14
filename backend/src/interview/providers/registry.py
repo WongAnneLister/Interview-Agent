@@ -105,6 +105,7 @@ def openai_compat_factory(
             api_key=vendor.api_key.get_secret_value(),
             base_url=base_url,
             timeout_s=role.timeout_s,
+            total_timeout_s=role.total_timeout_s,
             extra_body=role.extra_body,
         )
 

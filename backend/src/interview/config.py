@@ -113,7 +113,10 @@ class ProviderRoleSettings(BaseSettings):
     provider: str = ""
     model: str = ""
     base_url: str = ""  # 留空时用厂商级的 <厂商>_BASE_URL
+    # 单次调用的读超时：流式响应里是两个片段之间的最长间隔，不限制总时长
     timeout_s: float = Field(default=30.0, gt=0)
+    # 大模型 complete() 一次调用的总时限（秒）：开思考时片段不断，只有它能拦住跑几分钟的调用（C31）
+    total_timeout_s: float = Field(default=120.0, gt=0)
     # 透传给厂商的非标准参数（JSON），如百炼的 enable_thinking；与调用时的 extra 合并，调用时优先
     extra_body: dict[str, Any] = Field(default_factory=dict[str, Any])
 

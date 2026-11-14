@@ -7,6 +7,10 @@
 - 一律用流式请求（stream_options.include_usage），complete() 也是收齐流再返回，
   这样首 token 耗时和用量的取法一致。
 - 只输出正文 delta.content；思考内容 reasoning_content 不输出，只计入用量。
+- 超时分两层：timeout_s 是 httpx 的读超时，流式响应里只管“两个片段之间隔多久”，
+  开思考的模型会一直吐思考片段，永远不会触发；所以 complete() 另有 total_timeout_s，
+  限制一次调用从发请求到收齐的总时长，超出抛 ProviderTimeout，由注册表切备用（challenges C31）。
+  stream_chat() 不设总时限：消费方（如语音合成）读得慢也会拉长总时长，由调用方自己控制。
 - 429 与 5xx 在收到首个片段之前指数退避重试（SDK 自带的重试关闭，由这里控制并记日志），
   重试用完后按下表抛出，由注册表决定是否切换备用。日志只记录厂商、型号、状态码，不记录正文。
 
@@ -68,6 +72,7 @@ class OpenAICompatLLM:
         api_key: str,
         base_url: str,
         timeout_s: float,
+        total_timeout_s: float | None = None,
         extra_body: Mapping[str, Any] | None = None,
         max_retries: int = DEFAULT_MAX_RETRIES,
         retry_base_s: float = DEFAULT_RETRY_BASE_S,
@@ -76,6 +81,7 @@ class OpenAICompatLLM:
         self.provider = provider
         self.model = model
         self._timeout_s = timeout_s
+        self._total_timeout_s = total_timeout_s
         self._extra_body = dict(extra_body or {})
         self._max_retries = max_retries
         self._retry_base_s = retry_base_s
@@ -134,14 +140,34 @@ class OpenAICompatLLM:
         timeout_s: float | None = None,
         extra: Mapping[str, Any] | None = None,
     ) -> LLMResult:
-        async with self.stream_chat(
-            messages,
-            max_tokens=max_tokens,
-            temperature=temperature,
-            timeout_s=timeout_s,
-            extra=extra,
-        ) as stream:
-            text = "".join([chunk async for chunk in stream])
+        deadline = asyncio.timeout(self._total_timeout_s)
+        try:
+            async with (
+                deadline,
+                self.stream_chat(
+                    messages,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    timeout_s=timeout_s,
+                    extra=extra,
+                ) as stream,
+            ):
+                text = "".join([chunk async for chunk in stream])
+        except TimeoutError as exc:
+            # ProviderTimeout 也是 TimeoutError；只把总时限到期这一种换成带说明的超时
+            if not deadline.expired():
+                raise
+            log.warning(
+                "llm_total_timeout",
+                provider=self.provider,
+                model=self.model,
+                total_timeout_s=self._total_timeout_s,
+            )
+            raise ProviderTimeout(
+                f"{self.provider}/{self.model}: 超过总时限 {self._total_timeout_s:g} 秒",
+                provider=self.provider,
+                model=self.model,
+            ) from exc
         return LLMResult(
             text=text,
             usage=stream.usage,

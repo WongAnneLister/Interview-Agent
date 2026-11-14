@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 from typing import Any
 
 import httpx2
@@ -31,8 +32,9 @@ from interview.providers.base import (
     ProviderUnavailable,
     RateLimited,
 )
+from interview.providers.fake import FakeLLM
 from interview.providers.openai_compat import OpenAICompatLLM
-from interview.providers.registry import ProviderNotConfigured, default_factories
+from interview.providers.registry import FallbackLLM, ProviderNotConfigured, default_factories
 
 MESSAGES: list[ChatMessage] = [
     {"role": "system", "content": "你是面试官"},
@@ -218,6 +220,56 @@ async def test_broken_stream_is_bad_response(bad_event: str) -> None:
     assert await anext(stream) == "你好"
     with pytest.raises(BadResponse):
         await anext(stream)
+
+
+def endless_thinking() -> httpx2.Response:
+    """开思考的模型：思考片段源源不断，每段间隔远小于读超时，正文迟迟不来。"""
+
+    async def body() -> AsyncIterator[bytes]:
+        while True:
+            yield chunk({"reasoning_content": "再想想"}).encode()
+            await asyncio.sleep(0.01)
+
+    return httpx2.Response(200, headers={"content-type": "text/event-stream"}, content=body())
+
+
+async def test_complete_stops_at_total_timeout_although_chunks_keep_coming() -> None:
+    # 读超时 5 秒永远不会触发；只有总时限能结束这次调用（challenges C31）
+    llm = make_llm(Recorder(endless_thinking()), total_timeout_s=0.2)
+    started = asyncio.get_running_loop().time()
+    with capture_logs() as logs, pytest.raises(ProviderTimeout, match=r"总时限 0\.2 秒") as info:
+        await llm.complete(MESSAGES, **GEN)
+    assert asyncio.get_running_loop().time() - started < 2
+    assert (info.value.provider, info.value.model) == ("bailian", "qwen-test")
+    assert [e["event"] for e in logs] == ["llm_total_timeout"]
+    assert logs[0]["total_timeout_s"] == 0.2
+
+
+async def test_read_timeout_is_not_relabelled_as_total_timeout() -> None:
+    llm = make_llm(Recorder(httpx2.ReadTimeout("slow")), total_timeout_s=60)
+    with capture_logs() as logs, pytest.raises(ProviderTimeout) as info:
+        await llm.complete(MESSAGES, **GEN)
+    assert "总时限" not in str(info.value)
+    assert logs == []
+
+
+async def test_total_timeout_fails_over_to_backup() -> None:
+    primary = make_llm(Recorder(endless_thinking()), total_timeout_s=0.2)
+    backup = FakeLLM("备用的回答", provider="deepseek", model="deepseek-flash")
+    llm = FallbackLLM(primary, backup, slot="llm_eval")
+    result = await llm.complete(MESSAGES, **GEN)
+    assert (result.text, result.provider, result.model) == (
+        "备用的回答",
+        "deepseek",
+        "deepseek-flash",
+    )
+
+
+def test_total_timeout_defaults_and_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("LLM_EVAL_TOTAL_TIMEOUT_S", raising=False)
+    assert LLMEvalSettings().total_timeout_s == 120
+    monkeypatch.setenv("LLM_EVAL_TOTAL_TIMEOUT_S", "90")
+    assert LLMEvalSettings().total_timeout_s == 90
 
 
 # ---- 配置与注册表 ----
