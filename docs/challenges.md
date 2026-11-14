@@ -138,6 +138,10 @@
   - `make benchmark` 的合成失败数持续观察卡顿率，必要时切回 CosyVoice。CosyVoice 支持取消并复用连接，只需改 `.env`，见 [ADR-0001](adr/0001-tts-provider.md)。
   - PR-27 / PR-31 打断后调用 `warmup()` 预先建连，并评估卡住时的兜底：缩短超时后重试一次，或切换合成协议。
 - **进展（2026-11-14，PR-27）**：LiveKit 合成插件里，打断时 LiveKit 取消合成任务，`async with` 退出时调用厂商流的 `aclose()`，由适配器结束任务或断开连接；单元测试用 FakeTTS 确认打断后厂商流被关闭。厂商卡住时插件把 `ProviderTimeout` 翻译成可重试的超时，LiveKit 只在还没播出音频时重试一次。打断后预先建连、卡住时缩短超时，仍留 PR-31。
+- **PR-28 实测发现的两个协议坑（2026-11-14，已修复）**：
+  - 服务端拒绝只有空白的 `input_text_buffer.commit`（400 “buffer too small, or have no text”），整段话随之失败。英文句子之间带空格，最后一句后面只剩一个空格，回声 worker 的第一句提示语就因此没声音。适配器改为空白不提交（b199b88）。
+  - 一个连接只接受一次 `session.update`，第二次返回 “session already started or finished or failed”。原来的预热按默认语言（Auto）设置会话，正式说话带 `language=en/zh`，参数不同就在同一连接上再设置一次，于是失败——等于预热不但没用，还让第一句复用连接时出错。改为参数变化就换新连接，预热只建连、会话参数由第一句决定（649a8a6）。修复后回声测试首包 412–563 毫秒（3 次）。
+  - 两个问题假服务端都测不出来；假服务端已改成和真实服务一样只接受一次 `session.update`。
 
 ## C10 切到备用模型后，结果里记的仍是主模型（已解决）
 
