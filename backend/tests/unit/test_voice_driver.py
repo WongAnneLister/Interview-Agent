@@ -20,7 +20,7 @@ from interview.domain.orchestrator_events import (
     StateEvent,
 )
 from interview.domain.state_machine import InterviewState
-from interview.voice.driver import DISCLOSURE, SessionClock, VoiceDriver
+from interview.voice.driver import DISCLOSURE, RESUME, SessionClock, VoiceDriver
 
 TURN = uuid.uuid4()
 
@@ -87,6 +87,7 @@ class FakeOrchestrator:
     opening: Sequence[OrchestratorEvent] = ()
     replies: list[Sequence[OrchestratorEvent]] = field(default_factory=list[Sequence[Any]])
     on_ticks: dict[int, Sequence[OrchestratorEvent]] = field(default_factory=dict[int, Any])
+    repeat: Sequence[OrchestratorEvent] = ()
     calls: list[tuple[Any, ...]] = field(default_factory=list[tuple[Any, ...]])
     checkpoints: int = 0
     closed: bool = False
@@ -109,6 +110,10 @@ class FakeOrchestrator:
         ticks = sum(1 for call in self.calls if call[0] == "tick")
         self.calls.append(("tick", now_ms))
         return self._emit(self.on_ticks.get(ticks, ()))
+
+    def on_command(self, command: str, now_ms: int) -> AsyncGenerator[OrchestratorEvent]:
+        self.calls.append(("command", command, now_ms))
+        return self._emit(self.repeat)
 
     async def checkpoint(self) -> None:
         self.checkpoints += 1
@@ -185,9 +190,23 @@ async def test_turns_are_handled_in_order() -> None:
     driver.user_turn("第一轮", 0, 100)
     driver.user_turn("第二轮", 200, 150)  # 结束早于开始时按开始算
     assert await driver.run() is True
-    assert [c[1:] for c in orchestrator.calls] == [("第一轮", 0, 100), ("第二轮", 200, 200)]
-    assert speaker.said == []
+    turns = [c[1:] for c in orchestrator.calls if c[0] == "turn"]
+    assert turns == [("第一轮", 0, 100), ("第二轮", 200, 200)]
     assert [s.sentences for s in speaker.sinks] == [["一。 "], ["二。 "]]
+
+
+async def test_resumed_interview_says_continue_and_repeats_the_question() -> None:
+    orchestrator = FakeOrchestrator(repeat=speech("请介绍一下你做过的支付系统。"))
+    orchestrator.state = object()  # type: ignore[assignment]
+    driver, speaker, _ = make(orchestrator, base_ms=90_000, tick_s=5)
+    task = asyncio.create_task(driver.run())
+    await asyncio.sleep(0.01)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert speaker.said == [RESUME[Language.ZH]]  # 不再说声明
+    assert orchestrator.calls[0] == ("command", "repeat", 90_000)
+    assert speaker.sinks[0].sentences == ["请介绍一下你做过的支付系统。 "]
 
 
 async def test_ticks_advance_time_and_their_speech_is_spoken() -> None:

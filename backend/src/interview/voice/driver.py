@@ -2,7 +2,9 @@
 
 - 时钟：会话开始时刻为零点；续面时从上次保存的 clock_ms 接着走，断线期间不计入（与文字面试一致）。
   用墙钟换算，是因为 LiveKit 的事件（如候选人开口）带的是墙钟时间。
-- 新面试先说一句固定声明，再转发编排器的开场；进行中的面试重新进房时不说话（续面见 PR-39）。
+- 新面试先说一句固定声明，再转发编排器的开场；进行中的面试重新进房时先说“我们继续”，
+  再让编排器重复上一句（通常是当前题目），不然候选人进房后一片安静（PR-29 实测）。
+  完整的续面（断线期间的上下文、前端提示）见 PR-39。
 - 候选人的每一轮放进收件箱，由 run() 串行交给编排器；没有新一轮时每秒 tick 一次，
   推进阶段超时、思考超时。
 - 说话：过渡语用 Speaker.say() 立即合成（盖住评估的等待）；面试官正文逐句推进同一个
@@ -24,6 +26,7 @@ import structlog
 
 from interview.db.models import Language
 from interview.domain.orchestrator_events import (
+    CommandName,
     EndedEvent,
     InterviewerDone,
     InterviewerSentence,
@@ -32,6 +35,8 @@ from interview.domain.orchestrator_events import (
 from interview.domain.state_machine import InterviewState
 
 log = structlog.get_logger(__name__)
+
+RESUME = {Language.ZH: "好的，我们继续。", Language.EN: "All right, let's continue."}
 
 DISCLOSURE = {
     Language.ZH: "你好，本次面试由 AI 面试官进行，全程录音用于生成面试报告。",
@@ -77,6 +82,10 @@ class Orchestrator(Protocol):
     ) -> AsyncGenerator[OrchestratorEvent, None]: ...
 
     def on_tick(self, now_ms: int) -> AsyncGenerator[OrchestratorEvent, None]: ...
+
+    def on_command(
+        self, command: CommandName, now_ms: int
+    ) -> AsyncGenerator[OrchestratorEvent, None]: ...
 
     async def checkpoint(self) -> None: ...
 
@@ -132,8 +141,12 @@ class VoiceDriver:
         try:
             if orchestrator.state is None:
                 self._last = self._speaker.say(DISCLOSURE[self._language])
-                if await self._forward(orchestrator.start(self._clock.now_ms())):
-                    return await self._finish()
+                events = orchestrator.start(self._clock.now_ms())
+            else:
+                self._last = self._speaker.say(RESUME[self._language])
+                events = orchestrator.on_command("repeat", self._clock.now_ms())
+            if await self._forward(events):
+                return await self._finish()
             while True:
                 try:
                     turn = await asyncio.wait_for(self._inbox.get(), self._tick_interval_s)
