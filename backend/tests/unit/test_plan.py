@@ -16,6 +16,7 @@ from interview.domain import plan as plan_module
 from interview.domain.jd import JDParsed
 from interview.domain.plan import (
     MAX_QUESTIONS_PER_COMPETENCY,
+    DraftQuestion,
     InterviewPlan,
     PlanCompetency,
     PlanContext,
@@ -354,7 +355,7 @@ async def test_generated_plan_has_prompt_version_and_tech_terms() -> None:
         interview_id=INTERVIEW_ID,
     )
     plan: InterviewPlan = result.value
-    assert plan.prompt_version == "plan_questions@1"
+    assert plan.prompt_version == "plan_questions@2"
     assert plan.tech_terms == ["Go", "PostgreSQL"]
     assert [item.covered for item in plan.competencies] == [True, True, True, True]
     assert plan.questions[0].project == "Ledger"
@@ -555,3 +556,46 @@ def test_apply_question_edits_keeps_stage_competency_and_project() -> None:
         "Ledger",
     )
     assert updated[0].text == "改后的题"
+
+
+# ---- 题目要能一口气念完（PR-29 语音实测）----
+
+LONG_EN = (
+    "You claim ownership of sales-channel integration handling around 40K orders/day across "
+    "12 marketplaces. Show me the exact API and data-flow design that made this reliable, "
+    "where the bottlenecks were, and what you would change to handle ten times the volume "
+    "without adding more engineers."
+)
+
+
+def _draft(text: str) -> dict[str, object]:
+    return {
+        "stage": "technical",
+        "competency": "后端开发",
+        "text": text,
+        "key_points": ["要点"],
+        "follow_ups": ["追问一", "追问二"],
+    }
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "说说你做过最难的一次线上故障排查。",
+        "Walk me through the hardest outage you debugged.",
+    ],
+)
+def test_short_spoken_question_is_accepted(text: str) -> None:
+    assert DraftQuestion.model_validate(_draft(text)).text == text
+
+
+@pytest.mark.parametrize("text", [LONG_EN, "请详细说明" * 20])
+def test_long_draft_question_is_rejected_with_a_hint(text: str) -> None:
+    with pytest.raises(ValidationError, match="题目太长"):
+        DraftQuestion.model_validate(_draft(text))
+
+
+def test_stored_and_edited_questions_are_not_length_limited() -> None:
+    # 已存的计划（这条限制之前生成的）和用户手改的题目照常可用
+    stored = Question.model_validate({**_draft(LONG_EN), "id": "q1"})
+    assert stored.text == LONG_EN

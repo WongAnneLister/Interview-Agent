@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import re
 import uuid
 from collections import Counter
 from collections.abc import Mapping, Sequence
@@ -127,8 +128,37 @@ class QuestionBody(BaseModel):
         return values
 
 
+# 题目要在语音面试里念出来：提示词要求中文 ≤50 字、英文 ≤30 词，这里留出余量作为硬上限，
+# 超出时结构化输出按校验错误重试（PR-29 实测题目长达 230+ 字符，一口气念 20 多秒）。
+# 只约束模型生成的草稿；已存的计划和用户手改的题目不受限。
+MAX_QUESTION_CJK_CHARS = 70
+MAX_QUESTION_WORDS = 40
+_CJK = re.compile(r"[\u4e00-\u9fff]")
+
+
+def spoken_length_error(text: str) -> str | None:
+    """题目太长时返回给模型看的说明，否则 None。"""
+    if _CJK.search(text):
+        if len(text) > MAX_QUESTION_CJK_CHARS:
+            return (
+                f"题目太长（{len(text)} 字）：要能一口气念完，中文不超过 50 字，细节放进 key_points"
+            )
+        return None
+    words = len(text.split())
+    if words > MAX_QUESTION_WORDS:
+        return f"题目太长（{words} 个词）：要能一口气念完，英文不超过 30 个词，细节放进 key_points"
+    return None
+
+
 class DraftQuestion(QuestionBody):
     """模型输出里的题目：没有 id，id 由代码生成。"""
+
+    @field_validator("text")
+    @classmethod
+    def speakable(cls, text: str) -> str:
+        if (error := spoken_length_error(text)) is not None:
+            raise ValueError(error)
+        return text
 
 
 class Question(QuestionBody):

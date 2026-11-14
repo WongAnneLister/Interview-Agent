@@ -203,7 +203,7 @@ async def test_create_then_get_plan(api: Api) -> None:
     assert body["duration_min"] == 30
 
     plan = body["plan"]
-    assert plan["prompt_version"] == "plan_questions@1"
+    assert plan["prompt_version"] == "plan_questions@2"
     assert plan["tech_terms"] == ["Go", "PostgreSQL"]
     assert [question["id"] for question in plan["questions"]] == [
         "q1",
