@@ -8,8 +8,10 @@ response.audio.delta（base64 音频）… response.done（usage.characters）�
 
 - 用 commit 模式（官方称延迟最低）：客户端按句末标点切分，每凑满一句就 append + commit，
   整句合成、韵律完整；文本结束时把剩余部分提交。一次 synthesize() 的所有提交都完成即结束。
-- 会话不结束（不发 session.finish，它会让服务端关闭连接），连接放回空闲槽给下一句复用；
-  音色、采样率、语种变化时才重新发 session.update。warmup() 建连并按默认参数完成 session.update。
+- 会话不结束（不发 session.finish，它会让服务端关闭连接），连接放回空闲槽给下一句复用。
+  一个连接只接受一次 session.update（2026-11-14 PR-28 实测，第二次返回
+  “session already started”），所以音色、采样率、语种变化时换一条新连接。
+  warmup() 只建连、等 session.created，会话参数由第一句决定，预热的连接才能被用上。
 - 取消（打断）：协议没有取消当前合成的事件，直接关闭连接（不复用）；
   打断后可调用 warmup() 预建新连接。
 - 首包耗时：发出第一段文本到收到第一块音频。
@@ -143,9 +145,8 @@ class BailianTTSRealtime:
         )
 
     async def warmup(self) -> None:
-        """建连并按默认音色、24 kHz 完成 session.update，首句不必再等。"""
-        conn = await self._ws.guard_call(self._ready(self._session(None, None, 24000)))
-        await self._ws.release(conn)
+        """只建连（握手 + session.created），session.update 留给第一句，参数才对得上。"""
+        await self._ws.warmup()
 
     async def aclose(self) -> None:
         await self._ws.aclose()
@@ -180,7 +181,11 @@ class BailianTTSRealtime:
             conn: ClientConnection | None = None
             try:
                 conn = await self._ws.acquire()
-                if self._sessions.get(conn) != session:
+                if conn in self._sessions and self._sessions[conn] != session:
+                    # 服务端不接受第二次 session.update：参数变了就换新连接
+                    await self._ws.discard(conn)
+                    conn = await self._ws.acquire()
+                if conn not in self._sessions:
                     await self._send(conn, {"type": "session.update", "session": session})
                     async with asyncio.timeout(self._ws.timeout_s):
                         while True:

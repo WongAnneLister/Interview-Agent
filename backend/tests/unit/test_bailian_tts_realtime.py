@@ -60,6 +60,7 @@ class FakeServer:
         b = self.behavior
         buffer = ""
         total = 0  # 与真实服务一致：usage.characters 是整个会话的累计值
+        updated = False  # 与真实服务一致：一个连接只接受一次 session.update（PR-28 实测）
         try:
             await ws.send(json.dumps({"type": "session.created", "session": {"id": "s"}}))
             async for message in ws:
@@ -70,6 +71,14 @@ class FakeServer:
                     if index <= b.close_on_update:
                         await ws.close()
                         return
+                    if updated:
+                        message_text = (
+                            "Session update error: session already started or finished or failed."
+                        )
+                        error = {"code": "InvalidParameter", "message": message_text}
+                        await ws.send(json.dumps({"type": "error", "error": error}))
+                        continue
+                    updated = True
                     await ws.send(
                         json.dumps({"type": "session.updated", "session": event["session"]})
                     )
@@ -197,14 +206,18 @@ async def test_whitespace_only_text_is_never_committed(make_server: Any) -> None
 async def test_connection_and_session_are_reused(make_server: Any) -> None:
     server = await make_server()
     tts = client(server)
-    await tts.warmup()  # 默认音色、24 kHz
-    _, first = await synth(tts, "第一句。")
-    _, second = await synth(tts, "第二句话。")
+    await tts.warmup()  # 只建连，不发 session.update：参数等第一句来了再定
+    assert server.of("session.update") == []
+    _, first = await synth(tts, "第一句。", language="en")
+    _, second = await synth(tts, "第二句话。", language="en")
     # 同一会话里累计值继续增长（4 → 9），第二句只计自己的增量
     assert (first.usage.characters, second.usage.characters) == (4, 5)
-    await synth(tts, "换个音色。", voice="Bodega")
+    assert server.connections == 1  # 预热的连接被第一句用上了
+    # 参数变了：服务端不接受第二次 session.update，换一条新连接
+    _, third = await synth(tts, "换个音色。", voice="Bodega")
     await tts.aclose()
-    assert server.connections == 1
+    assert server.connections == 2
+    assert third.usage.characters == 5  # 新会话从头计数
     voices = [e["session"]["voice"] for e in server.of("session.update")]
     assert voices == ["Ryan", "Bodega"]  # 参数没变时不重复 session.update
 
