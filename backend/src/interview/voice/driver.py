@@ -122,12 +122,14 @@ class VoiceDriver:
         *,
         language: Language,
         tick_interval_s: float = 1.0,
+        on_state: Callable[[InterviewState | None], None] | None = None,
     ) -> None:
         self._orchestrator = orchestrator
         self._speaker = speaker
         self._clock = clock
         self._language = language
         self._tick_interval_s = tick_interval_s
+        self._on_state = on_state  # 每段事件转发完回调，语音层据此调轮次参数（PR-30）
         self._inbox: asyncio.Queue[_UserTurn] = asyncio.Queue()
         self._sink: SentenceSink | None = None
         self._last: Playout | None = None
@@ -166,6 +168,13 @@ class VoiceDriver:
             await orchestrator.aclose()
 
     async def _forward(self, events: AsyncGenerator[OrchestratorEvent, None]) -> bool:
+        try:
+            return await self._relay(events)
+        finally:
+            if self._on_state is not None:
+                self._on_state(self._orchestrator.state)
+
+    async def _relay(self, events: AsyncGenerator[OrchestratorEvent, None]) -> bool:
         async with aclosing(events) as stream:
             async for event in stream:
                 match event:

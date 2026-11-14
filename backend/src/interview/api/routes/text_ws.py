@@ -55,6 +55,7 @@ from interview.domain.orchestrator_events import (
     StageEvent,
     StateEvent,
     WireEvent,
+    orchestrator_config,
 )
 from interview.domain.orchestrator_store import InterviewNotFound
 from interview.domain.plan import InterviewRepository
@@ -365,6 +366,7 @@ async def _serve(
             user_id=user_id,
             sessionmaker=resources.sessionmaker,
             providers=resources.providers,
+            config=orchestrator_config(resources.settings.turn),
             on_ended=on_ended,
         )
     except InterviewNotFound:

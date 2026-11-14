@@ -35,22 +35,26 @@ from livekit.agents import (
     JobContext,
     JobProcess,
     TurnHandlingOptions,
+    UserInputTranscribedEvent,
     UserStateChangedEvent,
     llm,
     room_io,
     utils,
 )
+from livekit.agents.inference import TurnDetector
 from livekit.agents.voice import SpeechHandle
 from livekit.plugins import silero
 from pydantic import ValidationError
 
-from interview.config import Settings, get_settings
+from interview.config import Settings, TurnSettings, get_settings
 from interview.db.models import UsageRole
 from interview.db.session import create_engine, make_sessionmaker
 from interview.domain.orchestrator import InterviewOrchestrator
+from interview.domain.orchestrator_events import orchestrator_config
 from interview.domain.orchestrator_store import InterviewNotFound
 from interview.domain.report import ReportRunner, request_report
-from interview.domain.state_machine import Phase
+from interview.domain.state_machine import InterviewState, Phase
+from interview.domain.turn_intents import TurnKeywords, ends_with_done, load_keywords
 from interview.logging import configure_logging
 from interview.observability.tracing import init_tracing
 from interview.providers.observed import CallContext
@@ -59,6 +63,7 @@ from interview.voice.driver import Playout, SentenceSink, SessionClock, Speaker,
 from interview.voice.session import DispatchMetadata
 from interview.voice.stt_plugin import ProviderSTT
 from interview.voice.tts_plugin import ProviderTTS
+from interview.voice.turn_policy import Endpointing, classify, endpointing_for
 
 log = structlog.get_logger(__name__)
 
@@ -109,18 +114,53 @@ class LiveKitSpeaker:
         return _QueueSink(self._session)
 
 
+StateCallback = Callable[[InterviewState | None], None]
+
+
+class TurnTaker:
+    """按编排器状态切换“停顿多久算说完”（PR-30）：参数变了才下发，并记日志便于调参。"""
+
+    def __init__(self, settings: TurnSettings, apply: Callable[[Endpointing], None]) -> None:
+        self._settings = settings
+        self._apply = apply
+        self._current = endpointing_for("open", settings)  # 会话按开放回答的参数启动
+
+    def update(self, state: InterviewState | None) -> None:
+        kind = classify(state)
+        endpointing = endpointing_for(kind, self._settings)
+        if endpointing == self._current:
+            return
+        self._current = endpointing
+        self._apply(endpointing)
+        directive = state.last_directive if state is not None else None
+        log.info(
+            "turn_policy_applied",
+            kind=kind,
+            min_delay=endpointing.min_delay,
+            max_delay=endpointing.max_delay,
+            directive=directive.kind if directive is not None else None,
+            phase=state.phase.value if state is not None else None,
+        )
+
+
 class InterviewAgent(Agent):
     def __init__(
         self,
         clock: SessionClock,
         *,
-        make_driver: Callable[[Speaker], VoiceDriver],
+        make_driver: Callable[[Speaker, StateCallback], VoiceDriver],
         on_ended: Callable[[], None],
+        turn: TurnSettings,
+        keywords: TurnKeywords,
     ) -> None:
         super().__init__(instructions="interview")  # pyright: ignore[reportUnknownMemberType]
         self._clock = clock
         self._make_driver = make_driver
         self._on_ended = on_ended
+        self._turn = turn
+        self._keywords = keywords
+        self._session: AgentSession[None] | None = None
+        self._done_requested = False  # 本轮已经因为“我说完了”提前结束过
         self._driver: VoiceDriver | None = None
         self._task: asyncio.Task[None] | None = None
         self._speech_started_ms: int | None = None
@@ -130,7 +170,19 @@ class InterviewAgent(Agent):
         session: AgentSession[None] = self.session  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
         session.on("user_state_changed", self._on_user_state)  # pyright: ignore[reportUnknownMemberType]
         session.on("agent_state_changed", self._on_agent_state)  # pyright: ignore[reportUnknownMemberType]
-        self._driver = self._make_driver(LiveKitSpeaker(session))
+        session.on("user_input_transcribed", self._on_transcript)  # pyright: ignore[reportUnknownMemberType]
+        self._session = session
+
+        def apply(endpointing: Endpointing) -> None:
+            session.update_options(
+                endpointing_opts={
+                    "min_delay": endpointing.min_delay,
+                    "max_delay": endpointing.max_delay,
+                }
+            )
+
+        turns = TurnTaker(self._turn, apply)
+        self._driver = self._make_driver(LiveKitSpeaker(session), turns.update)
         self._task = asyncio.create_task(self._drive(self._driver), name="voice_driver")
 
     async def _drive(self, driver: VoiceDriver) -> None:
@@ -142,6 +194,15 @@ class InterviewAgent(Agent):
             self._speech_started_ms = self._clock.at(event.created_at)
         if event.old_state == "speaking" and event.new_state == "listening":
             self._stopped_at = event.created_at
+
+    def _on_transcript(self, event: UserInputTranscribedEvent) -> None:
+        # 候选人说“我说完了 / that's all”：不再等停顿判定，立即结束本轮（PR-30）
+        if self._done_requested or self._session is None:
+            return
+        if ends_with_done(event.transcript, self._keywords):
+            self._done_requested = True
+            log.info("turn_done_phrase", is_final=event.is_final)
+            self._session.commit_user_turn()
 
     def _on_agent_state(self, event: AgentStateChangedEvent) -> None:
         # 一轮的体感延迟：候选人停下 → 面试官开口（过渡语或正文），C8 / PR-33
@@ -157,6 +218,7 @@ class InterviewAgent(Agent):
     ) -> None:
         text = (new_message.text_content or "").strip()
         started, self._speech_started_ms = self._speech_started_ms, None
+        self._done_requested = False
         if not text or self._driver is None:
             return
         end_ms = self._clock.now_ms()
@@ -175,11 +237,20 @@ class InterviewAgent(Agent):
 
 
 def turn_handling(settings: Settings) -> TurnHandlingOptions:
-    """会话开始时按开放回答的停顿参数（TURN_OPEN_*）；框架默认 0.5 秒会在回答中途抢话。"""
+    """会话开始时按开放回答的停顿参数（TURN_OPEN_*），之后由 TurnTaker 按题型切换。
+
+    轮次检测用 livekit-agents 1.8.11 的音频模型 TurnDetector(version="v1-mini")：
+    本机推理（livekit-local-inference 自带权重，不用下载），不连 LiveKit Cloud
+    （"v1" 才走云端，会把候选人音频发出去），支持中英文。执行文档写的 MultilingualModel
+    在这个版本已标为 deprecated。TURN_DETECTOR_ENABLED=false 时只靠静音判断。
+    """
     turn = settings.turn
-    return TurnHandlingOptions(
+    options = TurnHandlingOptions(
         endpointing={"min_delay": turn.open_min_delay_s, "max_delay": turn.open_max_delay_s}
     )
+    if turn.detector_enabled:
+        options["turn_detection"] = TurnDetector(version="v1-mini")
+    return options
 
 
 @dataclass
@@ -255,6 +326,7 @@ async def entrypoint(ctx: JobContext) -> None:
             user_id=meta.user_id,
             sessionmaker=sessionmaker,
             providers=registry,
+            config=orchestrator_config(settings.turn),
             on_ended=on_ended,
         )
     except InterviewNotFound:
@@ -284,14 +356,17 @@ async def entrypoint(ctx: JobContext) -> None:
     clock = SessionClock(state.clock_ms if state is not None else 0)
     job.agent = InterviewAgent(
         clock,
-        make_driver=lambda speaker: VoiceDriver(
+        make_driver=lambda speaker, on_state: VoiceDriver(
             orchestrator,
             speaker,
             clock,
             language=meta.language,
             tick_interval_s=settings.app.ws_tick_interval_s,
+            on_state=on_state,
         ),
         on_ended=lambda: ctx.shutdown("interview ended"),
+        turn=settings.turn,
+        keywords=load_keywords(settings.turn.keywords_file),
     )
     session = AgentSession[None](
         vad=ctx.proc.userdata["vad"],

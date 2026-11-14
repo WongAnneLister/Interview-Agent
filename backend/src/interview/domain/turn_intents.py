@@ -86,9 +86,14 @@ class TurnKeywords:
         return cls(think=phrases("think"), done=phrases("done"))
 
 
-@lru_cache(maxsize=1)
+@lru_cache(maxsize=4)
+def load_keywords(path: Path) -> TurnKeywords:
+    """按路径缓存：每场面试都要用，文件只读一次。"""
+    return TurnKeywords.load(path)
+
+
 def default_keywords() -> TurnKeywords:
-    return TurnKeywords.load(DEFAULT_TURN_KEYWORDS_FILE)
+    return load_keywords(DEFAULT_TURN_KEYWORDS_FILE)
 
 
 def is_think_request(text: str, keywords: TurnKeywords | None = None) -> bool:

@@ -231,3 +231,21 @@ async def test_cancel_still_checkpoints_and_closes() -> None:
         await task
     assert (orchestrator.checkpoints, orchestrator.closed) == (1, True)
     assert speaker.sinks[0].closed
+
+
+async def test_state_is_reported_after_each_event_stream() -> None:
+    orchestrator = FakeOrchestrator(
+        opening=speech("请介绍自己。"), replies=[[*speech("好。"), EndedEvent()]]
+    )
+    seen: list[object] = []
+    driver = VoiceDriver(
+        orchestrator,
+        FakeSpeaker(),
+        SessionClock(0, wall=FakeWall()),
+        language=Language.ZH,
+        tick_interval_s=5,
+        on_state=seen.append,
+    )
+    driver.user_turn("我做过支付系统。", 0, 1000)
+    assert await driver.run() is True
+    assert len(seen) == 2  # 开场一次、候选人这一轮一次

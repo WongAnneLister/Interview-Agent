@@ -8,19 +8,27 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from livekit.agents import llm
+from livekit.agents.inference import TurnDetector
 from pydantic import ValidationError
+from structlog.testing import capture_logs
 from test_api import make_settings
 
+from interview.config import TurnSettings
 from interview.db.models import Language
+from interview.domain.state_machine import Directive, InterviewState, Phase
+from interview.domain.turn_intents import default_keywords
 from interview.voice.driver import SessionClock
 from interview.voice.session import DispatchMetadata
+from interview.voice.turn_policy import Endpointing
 from interview.voice.worker import (
     InterviewAgent,
+    TurnTaker,
     _JobState,  # pyright: ignore[reportPrivateUsage]
     build_server,
     entrypoint,
     on_session_end,
     prewarm,
+    turn_handling,
 )
 
 INTERVIEW = uuid.UUID("00000000-0000-4000-8000-000000000028")
@@ -79,7 +87,11 @@ def make_agent() -> tuple[InterviewAgent, MagicMock, FakeWall]:
     wall = FakeWall()
     driver = MagicMock()
     agent = InterviewAgent(
-        SessionClock(0, wall=wall), make_driver=lambda _speaker: driver, on_ended=lambda: None
+        SessionClock(0, wall=wall),
+        make_driver=lambda _speaker, _on_state: driver,
+        on_ended=lambda: None,
+        turn=TurnSettings.model_validate({}),
+        keywords=default_keywords(),
     )
     agent._driver = driver  # pyright: ignore[reportPrivateUsage]  # on_enter 需要真实会话，这里直接装上
     return agent, driver, wall
@@ -124,8 +136,6 @@ async def test_session_end_stops_driver_and_waits_for_report() -> None:
 
 
 def test_reply_latency_is_logged_from_when_the_candidate_stopped() -> None:
-    from structlog.testing import capture_logs
-
     agent, _, _ = make_agent()
     stopped = MagicMock(old_state="speaking", new_state="listening", created_at=200.0)
     agent._on_user_state(stopped)  # pyright: ignore[reportPrivateUsage]
@@ -136,12 +146,46 @@ def test_reply_latency_is_logged_from_when_the_candidate_stopped() -> None:
     assert [e["since_user_stopped_ms"] for e in replies] == [850]  # 同一轮只记第一次开口
 
 
-def test_turn_handling_waits_for_configured_pause() -> None:
-    from interview.voice.worker import turn_handling
-
+def test_turn_handling_starts_open_with_local_turn_detector() -> None:
     settings = make_settings()
     # 默认不在 0.5 秒的停顿处抢话；没说完时最多等 4 秒
-    assert turn_handling(settings).get("endpointing") == {"min_delay": 1.5, "max_delay": 4.0}
-    settings.turn.open_min_delay_s = 2.0
-    settings.turn.open_max_delay_s = 5.0
-    assert turn_handling(settings).get("endpointing") == {"min_delay": 2.0, "max_delay": 5.0}
+    options = turn_handling(settings)
+    assert options.get("endpointing") == {"min_delay": 1.5, "max_delay": 4.0}
+    detector = options.get("turn_detection")
+    # 本机推理的 v1-mini：不把候选人音频发去 LiveKit Cloud
+    assert isinstance(detector, TurnDetector) and detector.model == "turn-detector-v1-mini"
+    settings.turn.detector_enabled = False
+    assert "turn_detection" not in turn_handling(settings)
+
+
+def turn_state(kind: str, phase: Phase) -> InterviewState:
+    directive = Directive.model_validate({"kind": kind, "phase": phase})
+    return InterviewState.model_construct(phase=phase, last_directive=directive)
+
+
+def test_turn_taker_switches_endpointing_only_on_change() -> None:
+    applied: list[Endpointing] = []
+    taker = TurnTaker(TurnSettings.model_validate({}), applied.append)
+    with capture_logs() as logs:
+        taker.update(turn_state("ask", Phase.TECHNICAL))  # 会话本来就是开放回答的参数
+        taker.update(turn_state("check_in", Phase.TECHNICAL))
+        taker.update(turn_state("pause", Phase.TECHNICAL))  # 还是短问题，不重复下发
+        taker.update(turn_state("follow_up", Phase.TECHNICAL))
+    assert applied == [Endpointing(0.6, 2.0), Endpointing(1.5, 4.0)]
+    entries = [e for e in logs if e["event"] == "turn_policy_applied"]
+    assert [(e["kind"], e["directive"]) for e in entries] == [
+        ("short", "check_in"),
+        ("open", "follow_up"),
+    ]
+
+
+def test_done_phrase_commits_the_turn_once() -> None:
+    agent, _, _ = make_agent()
+    session = MagicMock()
+    agent._session = session  # pyright: ignore[reportPrivateUsage]
+    transcript = MagicMock(transcript="我做过支付系统。", is_final=False)
+    agent._on_transcript(transcript)  # pyright: ignore[reportPrivateUsage]
+    session.commit_user_turn.assert_not_called()
+    for text in ("……吞吐提升了三倍。就这些。", "就这些。"):
+        agent._on_transcript(MagicMock(transcript=text, is_final=False))  # pyright: ignore[reportPrivateUsage]
+    session.commit_user_turn.assert_called_once()  # 同一轮只提前结束一次

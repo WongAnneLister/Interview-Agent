@@ -6,12 +6,14 @@
 from __future__ import annotations
 
 import uuid
+from dataclasses import replace
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from interview.config import TurnSettings
 from interview.domain.state_machine import DEFAULT, MachineConfig, Phase
-from interview.domain.turn_intents import TurnKeywords
+from interview.domain.turn_intents import TurnKeywords, load_keywords
 
 
 class OrchestratorConfig(BaseModel):
@@ -23,6 +25,15 @@ class OrchestratorConfig(BaseModel):
 
 
 DEFAULT_CONFIG = OrchestratorConfig()
+
+
+def orchestrator_config(turn: TurnSettings) -> OrchestratorConfig:
+    """文字和语音面试共用：思考等待时长和“我想一下”词表来自 TURN_* 配置（PR-30）。"""
+    return OrchestratorConfig(
+        machine=replace(DEFAULT, think_timeout_ms=round(turn.think_timeout_s * 1000)),
+        keywords=load_keywords(turn.keywords_file),
+    )
+
 
 type CommandName = Literal["pause", "resume", "repeat", "skip", "end"]
 
