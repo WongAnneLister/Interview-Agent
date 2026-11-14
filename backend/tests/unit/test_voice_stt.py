@@ -10,6 +10,7 @@ import pytest
 from livekit import rtc
 from livekit.agents import APIConnectOptions, APIError, stt
 
+from interview.config import TurnSettings
 from interview.db.models import Language
 from interview.providers.base import (
     AuthError,
@@ -230,3 +231,11 @@ async def test_provider_error_keeps_what_was_heard() -> None:
     final = await first_final(stream)
     assert final.alternatives[0].text == "I built an order system"
     await stream.aclose()
+
+
+def test_flush_wait_is_shorter_than_the_shortest_endpointing_delay() -> None:
+    # 这一轮已有文字时 LiveKit 停顿 min_delay 就结束这一轮、不等 flush 的结果；
+    # 交出得比它晚，这段话就会被算进下一轮，面试官总在回应上一轮（PR-30 实测）
+
+    turn = TurnSettings.model_validate({})
+    assert turn.short_min_delay_s > stt_plugin.FLUSH_FINAL_WAIT_S

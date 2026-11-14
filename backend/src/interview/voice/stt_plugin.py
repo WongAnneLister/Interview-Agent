@@ -6,7 +6,7 @@
   插件随即结束当前厂商任务（Fun-ASR 收到 finish-task 立刻给出最终结果），下一段音频来了再开新任务。
   不 flush 时要等 Fun-ASR 自己判定句末，实测说完到出最终结果 2.5–13 秒（PR-29，C8）。
   每个任务的时间戳从 0 算，换任务时让基类按下一帧重新定锚。
-- flush 之后最多等 FLUSH_FINAL_WAIT_S 秒拿最终结果，等不到就把最近一次中间结果
+- flush 之后最多等 FLUSH_FINAL_WAIT_S（0.3 秒）拿最终结果，等不到就把最近一次中间结果
   当作最终结果、放弃这个任务；任务出错时也一样先保住中间结果再抛错。
   实测长回答里 Fun-ASR 一直不断句，finish-task 之后十几秒不返回，判定说完被拖到 6–10 秒，
   超时后整段识别结果被丢弃，候选人说的话等于没说（PR-30 实测）。
@@ -43,8 +43,11 @@ log = structlog.get_logger(__name__)
 
 # 百炼 Fun-ASR 实时识别要求的输入采样率；LiveKit 的麦克风帧通常是 48 kHz，由基类重采样
 SAMPLE_RATE = 16000
-# flush 后等最终结果的上限（秒）：比 LiveKit 手动结束一轮时等转写的 2 秒短，保证框架先拿到结果
-FLUSH_FINAL_WAIT_S = 1.5
+# flush 后等最终结果的上限（秒）。这一轮已经有文字时，LiveKit 不等 flush 的结果，
+# 停顿 min_delay（短问题 0.6 秒）后就结束这一轮；晚到的文字会被算进下一轮，
+# 面试官就总在回应上一轮（PR-30 实测，原来等 1.5 秒）。所以要远小于 min_delay；
+# Fun-ASR 的最终结果实测几乎从没在 1.5 秒内回来过，等于立即交出中间结果。
+FLUSH_FINAL_WAIT_S = 0.3
 
 
 class ProviderSTT(stt.STT[Never]):  # 没有自定义事件
