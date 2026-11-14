@@ -121,3 +121,16 @@ async def test_session_end_stops_driver_and_waits_for_report() -> None:
     reports.aclose.assert_awaited_once()
     assert "job" not in ctx.proc.userdata
     await on_session_end(ctx)  # 没有任务（如 metadata 不合法时）什么都不做
+
+
+def test_reply_latency_is_logged_from_when_the_candidate_stopped() -> None:
+    from structlog.testing import capture_logs
+
+    agent, _, _ = make_agent()
+    stopped = MagicMock(old_state="speaking", new_state="listening", created_at=200.0)
+    agent._on_user_state(stopped)  # pyright: ignore[reportPrivateUsage]
+    with capture_logs() as logs:
+        agent._on_agent_state(MagicMock(new_state="speaking", created_at=200.85))  # pyright: ignore[reportPrivateUsage]
+        agent._on_agent_state(MagicMock(new_state="speaking", created_at=203.0))  # pyright: ignore[reportPrivateUsage]
+    replies = [e for e in logs if e["event"] == "voice_reply_started"]
+    assert [e["since_user_stopped_ms"] for e in replies] == [850]  # 同一轮只记第一次开口

@@ -22,6 +22,7 @@ livekit-agents 的 Agent / AgentSession 签名里有未指定类型参数的泛�
 from __future__ import annotations
 
 import asyncio
+import time
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 
@@ -30,6 +31,7 @@ from livekit.agents import (
     Agent,
     AgentServer,
     AgentSession,
+    AgentStateChangedEvent,
     JobContext,
     JobProcess,
     UserStateChangedEvent,
@@ -121,10 +123,12 @@ class InterviewAgent(Agent):
         self._driver: VoiceDriver | None = None
         self._task: asyncio.Task[None] | None = None
         self._speech_started_ms: int | None = None
+        self._stopped_at: float | None = None  # 候选人最近一次停下说话的墙钟时间，用来量延迟
 
     async def on_enter(self) -> None:
         session: AgentSession[None] = self.session  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
         session.on("user_state_changed", self._on_user_state)  # pyright: ignore[reportUnknownMemberType]
+        session.on("agent_state_changed", self._on_agent_state)  # pyright: ignore[reportUnknownMemberType]
         self._driver = self._make_driver(LiveKitSpeaker(session))
         self._task = asyncio.create_task(self._drive(self._driver), name="voice_driver")
 
@@ -135,6 +139,17 @@ class InterviewAgent(Agent):
     def _on_user_state(self, event: UserStateChangedEvent) -> None:
         if event.new_state == "speaking" and self._speech_started_ms is None:
             self._speech_started_ms = self._clock.at(event.created_at)
+        if event.old_state == "speaking" and event.new_state == "listening":
+            self._stopped_at = event.created_at
+
+    def _on_agent_state(self, event: AgentStateChangedEvent) -> None:
+        # 一轮的体感延迟：候选人停下 → 面试官开口（过渡语或正文），C8 / PR-33
+        if event.new_state == "speaking" and self._stopped_at is not None:
+            log.info(
+                "voice_reply_started",
+                since_user_stopped_ms=round((event.created_at - self._stopped_at) * 1000),
+            )
+            self._stopped_at = None
 
     async def on_user_turn_completed(
         self, turn_ctx: llm.ChatContext, new_message: llm.ChatMessage
@@ -144,6 +159,11 @@ class InterviewAgent(Agent):
         if not text or self._driver is None:
             return
         end_ms = self._clock.now_ms()
+        if self._stopped_at is not None:
+            log.info(
+                "voice_turn_committed",
+                since_user_stopped_ms=round((time.time() - self._stopped_at) * 1000),
+            )
         # 交给 driver 就返回：评估和面试官生成在 driver 里跑，不挡住框架处理下一轮
         self._driver.user_turn(text, end_ms if started is None else started, end_ms)
 
