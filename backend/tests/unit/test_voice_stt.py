@@ -3,7 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import time
+import wave
 from collections.abc import AsyncGenerator
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -239,3 +243,41 @@ def test_flush_wait_is_shorter_than_the_shortest_endpointing_delay() -> None:
 
     turn = TurnSettings.model_validate({})
     assert turn.short_min_delay_s > stt_plugin.FLUSH_FINAL_WAIT_S
+
+
+async def test_debug_dir_saves_audio_and_event_timeline(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # 排查用（LIVEKIT_DEBUG_AUDIO_DIR）：每段送给识别的音频存成 wav，识别事件按时间记进 jsonl
+    monkeypatch.setattr(stt_plugin, "FLUSH_FINAL_WAIT_S", 0.2)
+    plugin = ProviderSTT(StuckSTT(), language=Language.EN, debug_dir=tmp_path / "debug-audio")
+    stream = plugin.stream(conn_options=FAST)
+    for _ in range(5):
+        stream.push_frame(frame())
+    stream.flush()
+    await first_final(stream)
+    timeline = await asyncio.wait_for(asyncio.to_thread(saved_timeline, tmp_path), 5)
+    await stream.aclose()
+
+    lines = [json.loads(line) for line in timeline.read_text(encoding="utf-8").splitlines()]
+    assert lines[0]["audio_s"] > 0
+    kinds = [line["kind"] for line in lines[1:]]
+    assert sorted(kinds[:2]) == ["flush", "partial"]
+    assert kinds[-3:] == ["final_wait_expired", "promoted", "final"]
+    assert lines[-2]["text"] == "I built an order system"
+    with wave.open(str(timeline.with_suffix(".wav")), "rb") as audio:
+        assert (audio.getframerate(), audio.getnchannels()) == (SAMPLE_RATE, 1)
+        assert audio.getnframes() > 0
+
+
+def saved_timeline(root: Path) -> Path:
+    """等插件在后台线程里写完第一段（wav 先写，jsonl 后写）。"""
+    while not (found := list(root.glob("debug-audio/*-001.jsonl"))):
+        time.sleep(0.02)
+    return found[0]
+
+
+async def test_no_debug_files_by_default(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    assert await run(FakeSTT(EVENTS, frames_per_event=5))
+    assert not await asyncio.to_thread(lambda: list(tmp_path.iterdir()))

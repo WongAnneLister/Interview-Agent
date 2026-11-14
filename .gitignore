@@ -28,6 +28,8 @@ backend/tests/live/fixtures/
 backend/tests/live/out/
 backend/tools/benchmark/data/
 backend/tools/benchmark/out/
+# 识别排查录音（LIVEKIT_DEBUG_AUDIO_DIR），含候选人原话
+debug-audio/
 
 # 仅供个人学习的调研资料，不进仓库
 docs/research/

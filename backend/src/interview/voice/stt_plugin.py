@@ -21,7 +21,8 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator
-from typing import Never
+from pathlib import Path
+from typing import Any, Never
 
 import structlog
 from livekit import rtc
@@ -37,6 +38,7 @@ from livekit.agents.language import LanguageCode
 
 from interview.db.models import Language
 from interview.providers.base import ProviderError, STTEvent, STTProvider
+from interview.voice.debug_audio import SegmentRecorder
 from interview.voice.plugin_errors import to_api_error
 
 log = structlog.get_logger(__name__)
@@ -58,6 +60,7 @@ class ProviderSTT(stt.STT[Never]):  # 没有自定义事件
         language: Language,
         language_hint: str | None = None,
         hotword_list_id: str | None = None,
+        debug_dir: Path | None = None,
     ) -> None:
         super().__init__(
             capabilities=stt.STTCapabilities(
@@ -68,6 +71,8 @@ class ProviderSTT(stt.STT[Never]):  # 没有自定义事件
         self._language = language
         self._language_hint = language_hint
         self._hotword_list_id = hotword_list_id
+        self._debug_dir = debug_dir  # 排查用：每段音频存成 wav（voice/debug_audio.py）
+        self._segments = 0
         self._warmup: asyncio.Task[None] | None = None
 
     @property
@@ -117,6 +122,7 @@ class _Stream(stt.RecognizeStream):
         self._billed_s = 0.0  # 当前任务已经通过 RECOGNITION_USAGE 上报的计费时长
         self._partial: STTEvent | None = None  # 当前这句最近的中间结果，还没有对应的最终结果
         self._deadline: asyncio.Timeout | None = None  # flush 后才开始计时
+        self._recorder: SegmentRecorder | None = None
 
     async def _next_frame(self) -> rtc.AudioFrame | None:
         """下一段的第一帧；跳过没有音频的 flush，输入结束返回 None。"""
@@ -130,6 +136,7 @@ class _Stream(stt.RecognizeStream):
 
     async def _segment(self, first: rtc.AudioFrame) -> AsyncIterator[bytes]:
         """一个厂商任务的音频：读到 flush 或输入结束为止。"""
+        self._record(first.data.tobytes())
         yield first.data.tobytes()
         while True:
             try:
@@ -139,9 +146,19 @@ class _Stream(stt.RecognizeStream):
                 self._start_final_deadline()
                 return
             if not isinstance(item, rtc.AudioFrame):  # _FlushSentinel：候选人停下了
+                self._note("flush")
                 self._start_final_deadline()
                 return
+            self._record(item.data.tobytes())
             yield item.data.tobytes()
+
+    def _record(self, chunk: bytes) -> None:
+        if self._recorder is not None:
+            self._recorder.audio(chunk)
+
+    def _note(self, kind: str, **fields: Any) -> None:
+        if self._recorder is not None:
+            self._recorder.event(kind, **fields)
 
     def _start_final_deadline(self) -> None:
         if self._deadline is not None:
@@ -162,6 +179,13 @@ class _Stream(stt.RecognizeStream):
         owner = self._owner
         self._billed_s = 0.0
         self._partial = None
+        if owner._debug_dir is not None:  # pyright: ignore[reportPrivateUsage]
+            owner._segments += 1  # pyright: ignore[reportPrivateUsage]
+            self._recorder = SegmentRecorder(
+                owner._debug_dir,  # pyright: ignore[reportPrivateUsage]
+                owner._segments,  # pyright: ignore[reportPrivateUsage]
+                sample_rate=SAMPLE_RATE,
+            )
         try:
             async with owner._provider.stream(  # pyright: ignore[reportPrivateUsage]
                 self._segment(first),
@@ -184,6 +208,7 @@ class _Stream(stt.RecognizeStream):
                         raise
                     # 退出 async with 时关闭厂商流，适配器放弃这个任务
                     log.warning("stt_final_wait_expired", wait_s=FLUSH_FINAL_WAIT_S)
+                    self._note("final_wait_expired")
                     self._promote_partial()
                 finally:
                     self._deadline = None
@@ -193,11 +218,17 @@ class _Stream(stt.RecognizeStream):
             # 最后一句之后的音频（含静音）也计费，任务结束时补报
             self._report_usage(events.usage.audio_seconds if events.usage else 0.0)
         except ProviderError as exc:
+            self._note("error", error=type(exc).__name__)
             self._promote_partial()  # 任务失败也不丢已经识别出来的话
             raise to_api_error(exc) from exc
+        finally:
+            if self._recorder is not None:
+                recorder, self._recorder = self._recorder, None
+                await recorder.save()
 
     def _promote_partial(self) -> None:
         partial, self._partial = self._partial, None
+        self._note("promoted", text=partial.text if partial is not None else "")
         if partial is not None:
             self._handle(
                 STTEvent(
@@ -210,6 +241,7 @@ class _Stream(stt.RecognizeStream):
             )
 
     def _handle(self, event: STTEvent) -> None:
+        self._note(event.kind, text=event.text, start_ms=event.start_ms, end_ms=event.end_ms)
         if not event.text and event.kind == "partial":
             return
         if not self._speaking:

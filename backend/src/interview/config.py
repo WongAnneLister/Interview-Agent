@@ -123,6 +123,8 @@ class LiveKitSettings(BaseSettings):
     worker_idle_processes: int = Field(default=1, ge=0)
     # worker 收到停止信号后等进行中的面试结束的最长时间（秒）：最长 30 分钟的面试加余量
     drain_timeout_s: int = Field(default=2400, gt=0)
+    # 排查用：设了目录就把每段送给识别的音频存成 wav、识别事件存成 jsonl（含候选人原话，只在本机）
+    debug_audio_dir: Path | None = None
 
 
 class S3Settings(BaseSettings):

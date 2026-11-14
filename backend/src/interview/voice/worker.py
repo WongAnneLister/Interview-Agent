@@ -343,7 +343,11 @@ async def entrypoint(ctx: JobContext) -> None:
     def call(role: UsageRole) -> CallContext:
         return CallContext(user_id=meta.user_id, interview_id=meta.interview_id, usage_role=role)
 
-    stt = ProviderSTT(registry.stt(call(UsageRole.ASR)), language=meta.language)
+    stt = ProviderSTT(
+        registry.stt(call(UsageRole.ASR)),
+        language=meta.language,
+        debug_dir=settings.livekit.debug_audio_dir,
+    )
     tts = ProviderTTS(
         registry.tts(call(UsageRole.TTS)),
         language=meta.language,
