@@ -908,3 +908,24 @@ async def test_load_only_reads_turns_of_this_interview(make_harness: Any) -> Non
     )
     assert loaded.turn_seq < 99
     await harness.orchestrator.aclose()
+
+
+async def test_repeat_request_repeats_question_without_evaluation(make_harness: Any) -> None:
+    # “请再说一遍”不交给评估：评估失败时会按换题降级，题目就被跳过了（PR-29 实测，C33）
+    harness = await make_harness(actions=["next_question"])
+    await open_to_deep(harness)
+    before = harness.orchestrator.state
+    assert before is not None
+    eval_calls = len(harness.eval_llm.calls)
+    events = await collect(
+        harness.orchestrator.on_user_turn("Sorry, could you repeat the question?", 10_000, 12_000)
+    )
+    after = harness.orchestrator.state
+    assert after is not None and after.current_question_id == before.current_question_id
+    assert len(harness.eval_llm.calls) == eval_calls
+    sentences = events_of(events, InterviewerSentence)
+    assert sentences and not any(s.transition for s in sentences)  # 不说过渡语
+    turns = await fetch_turns(harness)
+    assert [t.role for t in turns[-2:]] == [TurnRole.CANDIDATE, TurnRole.INTERVIEWER]
+    assert turns[-2].text == "Sorry, could you repeat the question?"  # 照样记进转写
+    await harness.orchestrator.aclose()

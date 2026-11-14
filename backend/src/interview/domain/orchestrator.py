@@ -48,6 +48,7 @@ from interview.domain.state_machine import (
 )
 from interview.domain.state_machine import start as machine_start
 from interview.domain.state_machine import step as machine_step
+from interview.domain.turn_intents import is_repeat_request
 from interview.observability.budget import BudgetStatus
 from interview.observability.tracing import OpenSpan, open_span
 from interview.providers.observed import CallContext
@@ -427,6 +428,29 @@ class InterviewOrchestrator:
                     start_ms=start_ms,
                     end_ms=end_ms,
                 )
+                if is_repeat_request(text):
+                    # 明确的“请再说一遍”不交给评估：评估失败或超时会按换题降级，
+                    # 题目就被跳过了（C33）
+                    span.span.set_attribute("turn.intent", "repeat")
+                    with span.activate():
+                        step = machine_step(
+                            plan,
+                            state,
+                            Command(now_ms=end_ms, command="repeat"),
+                            self._config.machine,
+                        )
+                    async with aclosing(
+                        self._respond(
+                            step,
+                            previous_phase=state.phase,
+                            trigger_ms=end_ms,
+                            transition="",
+                            span=span,
+                        )
+                    ) as events:
+                        async for event in events:
+                            yield event
+                    return
                 yield StateEvent(value="thinking")
 
                 evaluation = None
