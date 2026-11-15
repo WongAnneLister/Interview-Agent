@@ -10,8 +10,11 @@
 - 面试结束：driver 返回后 ctx.shutdown()，会话关闭并删除房间，候选人随之断开；
   on_session_end 钩子（会话关闭后、进程退出前，有 session_end_timeout）等报告写完。
   候选人中途离开：driver 被取消时 checkpoint() 存档，面试保持 in_progress（续面见 PR-39）。
-- 这一版面试官说话时不能打断（allow_interruptions=False），候选人插话会被丢弃，
-  历史记录与实际播出一致；打断见 PR-31。
+- 打断（PR-31）：面试官说话时候选人开口会打断它（开场声明除外），至少说 0.6 秒、
+  识别出 2 个词（中文按字）才算，单独一个“嗯”不触发；没成句的插话约 2 秒后面试官接着说
+  （LiveKit 的 resume_false_interruption）。面试官说话时候选人只说了应答词（词表
+  turn_keywords.yaml 的 backchannel），这一轮不交给编排器。被打断的那段话只记录实际播出的文字
+  （SpeechHandle.chat_items），截断在 driver 里做。TURN_INTERRUPTION_ENABLED=false 可关闭。
 - 优雅退出由 LiveKit CLI 完成（非 dev 模式）：收到停止信号后不再接新任务，
   最多等 drain_timeout_s 让进行中的面试结束。
 
@@ -54,7 +57,12 @@ from interview.domain.orchestrator_events import orchestrator_config
 from interview.domain.orchestrator_store import InterviewNotFound
 from interview.domain.report import ReportRunner, request_report
 from interview.domain.state_machine import InterviewState, Phase
-from interview.domain.turn_intents import TurnKeywords, ends_with_done, load_keywords
+from interview.domain.turn_intents import (
+    TurnKeywords,
+    ends_with_done,
+    is_backchannel,
+    load_keywords,
+)
 from interview.logging import configure_logging
 from interview.observability.tracing import init_tracing
 from interview.providers.observed import CallContext
@@ -78,40 +86,65 @@ class _HandlePlayout:
     async def wait(self) -> None:
         await self._handle.wait_for_playout()
 
+    @property
+    def interrupted(self) -> bool:
+        return self._handle.interrupted
+
+    @property
+    def spoken(self) -> str:
+        # 框架把实际播出的部分（被打断时截到打断处）作为一条助手消息记进 chat_items
+        return "".join(
+            item.text_content or ""
+            for item in self._handle.chat_items
+            if isinstance(item, llm.ChatMessage) and item.role == "assistant"
+        )
+
+    def interrupt(self) -> None:
+        self._handle.interrupt(force=True)
+
+    def on_done(self, callback: Callable[[Playout], None]) -> None:
+        self._handle.add_done_callback(lambda _: callback(self))
+
 
 class _QueueSink:
     """一段边生成边说的话：句子进队列，session.say() 从队列里读。"""
 
-    def __init__(self, session: AgentSession[None]) -> None:
+    def __init__(self, session: AgentSession[None], *, interruptible: bool) -> None:
         self._queue: asyncio.Queue[str | None] = asyncio.Queue()
-        self._handle = session.say(  # pyright: ignore[reportUnknownMemberType]
-            self._texts(), allow_interruptions=False
+        handle = session.say(  # pyright: ignore[reportUnknownMemberType]
+            self._texts(), allow_interruptions=interruptible
         )
+        self._playout = _HandlePlayout(handle)
 
     async def _texts(self) -> AsyncIterator[str]:
         while (sentence := await self._queue.get()) is not None:
             yield sentence
+
+    @property
+    def playout(self) -> Playout:
+        return self._playout
 
     def push(self, sentence: str) -> None:
         self._queue.put_nowait(sentence)
 
     def close(self) -> Playout:
         self._queue.put_nowait(None)
-        return _HandlePlayout(self._handle)
+        return self._playout
 
 
 class LiveKitSpeaker:
-    def __init__(self, session: AgentSession[None]) -> None:
+    def __init__(self, session: AgentSession[None], *, interruptions: bool = True) -> None:
         self._session = session
+        self._interruptions = interruptions  # TURN_INTERRUPTION_ENABLED
 
-    def say(self, text: str) -> Playout:
+    def say(self, text: str, *, interruptible: bool = True) -> Playout:
         handle = self._session.say(  # pyright: ignore[reportUnknownMemberType]
-            text, allow_interruptions=False
+            text, allow_interruptions=interruptible and self._interruptions
         )
         return _HandlePlayout(handle)
 
     def stream(self) -> SentenceSink:
-        return _QueueSink(self._session)
+        return _QueueSink(self._session, interruptible=self._interruptions)
 
 
 StateCallback = Callable[[InterviewState | None], None]
@@ -165,6 +198,8 @@ class InterviewAgent(Agent):
         self._task: asyncio.Task[None] | None = None
         self._speech_started_ms: int | None = None
         self._stopped_at: float | None = None  # 候选人最近一次停下说话的墙钟时间，用来量延迟
+        self._agent_speaking = False
+        self._overlapped = False  # 候选人这一轮是在面试官说话时开口的
 
     async def on_enter(self) -> None:
         session: AgentSession[None] = self.session  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
@@ -182,7 +217,8 @@ class InterviewAgent(Agent):
             )
 
         turns = TurnTaker(self._turn, apply)
-        self._driver = self._make_driver(LiveKitSpeaker(session), turns.update)
+        speaker = LiveKitSpeaker(session, interruptions=self._turn.interruption_enabled)
+        self._driver = self._make_driver(speaker, turns.update)
         self._task = asyncio.create_task(self._drive(self._driver), name="voice_driver")
 
     async def _drive(self, driver: VoiceDriver) -> None:
@@ -192,6 +228,7 @@ class InterviewAgent(Agent):
     def _on_user_state(self, event: UserStateChangedEvent) -> None:
         if event.new_state == "speaking" and self._speech_started_ms is None:
             self._speech_started_ms = self._clock.at(event.created_at)
+            self._overlapped = self._agent_speaking
         if event.old_state == "speaking" and event.new_state == "listening":
             self._stopped_at = event.created_at
 
@@ -205,6 +242,7 @@ class InterviewAgent(Agent):
             self._session.commit_user_turn()
 
     def _on_agent_state(self, event: AgentStateChangedEvent) -> None:
+        self._agent_speaking = event.new_state == "speaking"
         # 一轮的体感延迟：候选人停下 → 面试官开口（过渡语或正文），C8 / PR-33
         if event.new_state == "speaking" and self._stopped_at is not None:
             log.info(
@@ -218,8 +256,13 @@ class InterviewAgent(Agent):
     ) -> None:
         text = (new_message.text_content or "").strip()
         started, self._speech_started_ms = self._speech_started_ms, None
+        overlapped, self._overlapped = self._overlapped, False
         self._done_requested = False
         if not text or self._driver is None:
+            return
+        if overlapped and is_backchannel(text, self._keywords):
+            # 面试官说话时的“嗯”“对”：不是回答，不交给编排器（只记动作，不记原话）
+            log.info("voice_backchannel_ignored")
             return
         end_ms = self._clock.now_ms()
         if self._stopped_at is not None:
@@ -246,7 +289,15 @@ def turn_handling(settings: Settings) -> TurnHandlingOptions:
     """
     turn = settings.turn
     options = TurnHandlingOptions(
-        endpointing={"min_delay": turn.open_min_delay_s, "max_delay": turn.open_max_delay_s}
+        endpointing={"min_delay": turn.open_min_delay_s, "max_delay": turn.open_max_delay_s},
+        # PR-31：短于 min_duration、少于 min_words 个词（中文按字）的插话不打断；
+        # 打断后约 2 秒没成句就从停下的地方接着说
+        interruption={
+            "enabled": turn.interruption_enabled,
+            "min_duration": turn.interruption_min_duration_s,
+            "min_words": turn.interruption_min_words,
+            "resume_false_interruption": True,
+        },
     )
     if turn.detector_enabled:
         options["turn_detection"] = TurnDetector(version="v1-mini")

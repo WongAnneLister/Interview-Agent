@@ -37,13 +37,33 @@ def speech(*texts: str) -> list[OrchestratorEvent]:
     return [*events, InterviewerDone(turn_id=TURN, text="".join(texts))]
 
 
-@dataclass
+@dataclass(eq=False)
 class FakePlayout:
     name: str
     log: list[str]
+    text: str = ""
+    interrupted: bool = False
+    stopped: bool = False  # 被 driver 主动打断（排在后面的那段）
+    callbacks: list[Any] = field(default_factory=list[Any])
 
     async def wait(self) -> None:
         self.log.append(f"wait:{self.name}")
+
+    @property
+    def spoken(self) -> str:
+        return "" if self.stopped else self.text
+
+    def interrupt(self) -> None:
+        self.stopped = True
+
+    def on_done(self, callback: Any) -> None:
+        self.callbacks.append(callback)
+
+    def cut(self, spoken: str) -> None:
+        """模拟候选人打断：只播出了 spoken。"""
+        self.text, self.interrupted = spoken, True
+        for callback in self.callbacks:
+            callback(self)
 
 
 @dataclass
@@ -52,6 +72,10 @@ class FakeSink:
     log: list[str]
     sentences: list[str] = field(default_factory=list[str])
     closed: bool = False
+    playout: FakePlayout = field(init=False)
+
+    def __post_init__(self) -> None:
+        self.playout = FakePlayout(f"stream{self.index}", self.log)
 
     def push(self, sentence: str) -> None:
         assert not self.closed
@@ -60,7 +84,7 @@ class FakeSink:
     def close(self) -> FakePlayout:
         self.closed = True
         self.log.append(f"close:{self.index}")
-        return FakePlayout(f"stream{self.index}", self.log)
+        return self.playout
 
 
 @dataclass
@@ -68,11 +92,17 @@ class FakeSpeaker:
     log: list[str] = field(default_factory=list[str])
     said: list[str] = field(default_factory=list[str])
     sinks: list[FakeSink] = field(default_factory=list[FakeSink])
+    playouts: list[FakePlayout] = field(default_factory=list[FakePlayout])
+    uninterruptible: list[str] = field(default_factory=list[str])
 
-    def say(self, text: str) -> FakePlayout:
+    def say(self, text: str, *, interruptible: bool = True) -> FakePlayout:
         self.said.append(text)
         self.log.append(f"say:{text}")
-        return FakePlayout(text, self.log)
+        if not interruptible:
+            self.uninterruptible.append(text)
+        playout = FakePlayout(text, self.log, text=text)
+        self.playouts.append(playout)
+        return playout
 
     def stream(self) -> FakeSink:
         sink = FakeSink(len(self.sinks), self.log)
@@ -91,10 +121,14 @@ class FakeOrchestrator:
     calls: list[tuple[Any, ...]] = field(default_factory=list[tuple[Any, ...]])
     checkpoints: int = 0
     closed: bool = False
+    truncated: list[str] = field(default_factory=list[str])
 
     async def _emit(self, events: Sequence[OrchestratorEvent]) -> AsyncGenerator[OrchestratorEvent]:
         for event in events:
             yield event
+
+    async def truncate_interviewer_turn(self, spoken: str) -> None:
+        self.truncated.append(spoken)
 
     def start(self, now_ms: int) -> AsyncGenerator[OrchestratorEvent]:
         self.calls.append(("start", now_ms))
@@ -249,3 +283,70 @@ async def test_state_is_reported_after_each_event_stream() -> None:
     driver.user_turn("我做过支付系统。", 0, 1000)
     assert await driver.run() is True
     assert len(seen) == 2  # 开场一次、候选人这一轮一次
+
+
+# ---- 打断（PR-31）----
+
+
+@dataclass
+class CuttingOrchestrator(FakeOrchestrator):
+    """第一轮回答说到一半被打断：正文第一句播了一半，候选人开口。"""
+
+    speaker: FakeSpeaker | None = None
+    cut_transition: bool = False
+
+    def on_user_turn(
+        self, text: str, start_ms: int, end_ms: int
+    ) -> AsyncGenerator[OrchestratorEvent]:
+        self.calls.append(("turn", text, start_ms, end_ms))
+        if len([c for c in self.calls if c[0] == "turn"]) > 1:
+            return self._emit([*speech("好的，那你说。"), EndedEvent()])
+        return self._reply()
+
+    async def _reply(self) -> AsyncGenerator[OrchestratorEvent]:
+        assert self.speaker is not None
+        yield sentence("嗯，明白了。", transition=True)
+        if self.cut_transition:
+            self.speaker.playouts[-1].cut("嗯，")
+        yield sentence("那我们聊聊缓存。")
+        if not self.cut_transition:
+            self.speaker.sinks[-1].playout.cut("那我们聊")
+        yield sentence("你是怎么设计失效策略的？")
+        yield InterviewerDone(
+            turn_id=TURN, text="嗯，明白了。那我们聊聊缓存。你是怎么设计失效策略的？"
+        )
+
+
+async def run_cut(*, cut_transition: bool) -> tuple[CuttingOrchestrator, FakeSpeaker]:
+    orchestrator = CuttingOrchestrator(cut_transition=cut_transition)
+    orchestrator.state = object()  # type: ignore[assignment]
+    driver, speaker, _ = make(orchestrator, tick_s=5)
+    orchestrator.speaker = speaker
+    driver.user_turn("我做过支付系统。", 0, 100)
+    driver.user_turn("等一下，我想补充一点", 200, 300)
+    assert await driver.run() is True
+    return orchestrator, speaker
+
+
+async def test_interrupted_reply_stops_and_keeps_only_what_was_spoken() -> None:
+    orchestrator, speaker = await run_cut(cut_transition=False)
+    # 被打断后生成出来的句子不再推给合成
+    assert speaker.sinks[0].sentences == ["那我们聊聊缓存。 "]
+    # 处理候选人下一轮之前，先把这一轮面试官发言截成实际播出的部分
+    assert orchestrator.truncated == ["嗯，明白了。那我们聊"]
+    assert [c[0] for c in orchestrator.calls] == ["command", "turn", "turn"]
+
+
+async def test_interrupting_the_transition_cancels_the_queued_reply() -> None:
+    orchestrator, speaker = await run_cut(cut_transition=True)
+    # 正文还没开始就被打断：不再开新的一段
+    assert speaker.sinks[0].sentences == ["好的，那你说。 "]
+    assert orchestrator.truncated == ["嗯，"]
+
+
+async def test_disclosure_cannot_be_interrupted() -> None:
+    orchestrator = FakeOrchestrator(opening=[*speech("请介绍自己。"), EndedEvent()])
+    driver, speaker, _ = make(orchestrator, tick_s=5)
+    assert await driver.run() is True
+    assert speaker.uninterruptible == [DISCLOSURE[Language.ZH]]
+    assert orchestrator.truncated == []

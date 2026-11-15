@@ -158,6 +158,33 @@ def test_turn_handling_starts_open_with_local_turn_detector() -> None:
     assert "turn_detection" not in turn_handling(settings)
 
 
+def test_turn_handling_enables_interruptions_with_thresholds() -> None:
+    # PR-31：至少说 0.6 秒、识别出 2 个词（中文按字）才打断；没成句的插话之后接着说
+    settings = make_settings()
+    interruption = turn_handling(settings).get("interruption")
+    assert interruption == {
+        "enabled": True,
+        "min_duration": 0.6,
+        "min_words": 2,
+        "resume_false_interruption": True,
+    }
+    settings.turn.interruption_enabled = False
+    assert turn_handling(settings).get("interruption", {}).get("enabled") is False
+
+
+async def test_backchannel_while_interviewer_speaks_is_not_a_turn() -> None:
+    agent, driver, _ = make_agent()
+    agent._on_agent_state(MagicMock(new_state="speaking", created_at=100.0))  # pyright: ignore[reportPrivateUsage]
+    agent._on_user_state(speaking(101.0))  # pyright: ignore[reportPrivateUsage]
+    await agent.on_user_turn_completed(llm.ChatContext.empty(), message("嗯嗯，对。"))
+    driver.user_turn.assert_not_called()
+    # 面试官没在说话时，同样的话照常交给编排器（可能是在回答“准备好了吗”）
+    agent._on_agent_state(MagicMock(new_state="listening", created_at=102.0))  # pyright: ignore[reportPrivateUsage]
+    agent._on_user_state(speaking(103.0))  # pyright: ignore[reportPrivateUsage]
+    await agent.on_user_turn_completed(llm.ChatContext.empty(), message("嗯嗯，对。"))
+    driver.user_turn.assert_called_once()
+
+
 def turn_state(kind: str, phase: Phase) -> InterviewState:
     directive = Directive.model_validate({"kind": kind, "phase": phase})
     return InterviewState.model_construct(phase=phase, last_directive=directive)

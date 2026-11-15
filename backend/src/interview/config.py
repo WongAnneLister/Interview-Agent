@@ -70,6 +70,11 @@ class TurnSettings(BaseSettings):
     open_min_delay_s: float = Field(default=1.2, gt=0, le=10)
     open_max_delay_s: float = Field(default=3.0, gt=0, le=20)
     think_timeout_s: float = Field(default=20.0, gt=0)  # 说“我想一下”后最多等多久再询问
+    # 打断（PR-31）：面试官说话时候选人开口就停下。至少说这么久、识别出这么多词（中文按字）才算，
+    # 单独一个“嗯”不打断；外放时如果回声误触发，可以先关掉
+    interruption_enabled: bool = True
+    interruption_min_duration_s: float = Field(default=0.6, gt=0, le=5)
+    interruption_min_words: int = Field(default=2, ge=0, le=10)
     detector_enabled: bool = True  # 轮次检测模型（约 400 MB，make download-models）
     keywords_file: Path = DEFAULT_TURN_KEYWORDS_FILE  # “我想一下 / 我说完了”词表
 

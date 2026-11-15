@@ -11,6 +11,9 @@
   SentenceSink（边生成边说），InterviewerDone 时关闭。每句补一个空格再推：合成插件的分句器
   遇到“句末标点在缓冲末尾”会先等下一段，不补空格每句都要等下一句生成出来才开口（C8）。
 - 结束：收到 EndedEvent 等最后一段播完，run() 返回 True；无论怎么退出都 checkpoint() + aclose()。
+- 打断（PR-31）：一段回答（过渡语 + 正文）里任何一段播放被候选人打断，就打断后面排队的、
+  不再推新句子；处理下一件事之前，把实际播出的文字交给编排器截断这一轮面试官发言。
+  开场声明不可打断。
 """
 
 from __future__ import annotations
@@ -52,8 +55,25 @@ class Playout(Protocol):
         """等这段话播完（被取消也算结束）。"""
         ...
 
+    @property
+    def interrupted(self) -> bool: ...
+
+    @property
+    def spoken(self) -> str:
+        """实际播出的文字（播完或被打断后才准确）。"""
+        ...
+
+    def interrupt(self) -> None:
+        """停下这段话（还没开始的直接取消）。"""
+        ...
+
+    def on_done(self, callback: Callable[[Playout], None]) -> None: ...
+
 
 class SentenceSink(Protocol):
+    @property
+    def playout(self) -> Playout: ...
+
     def push(self, sentence: str) -> None: ...
 
     def close(self) -> Playout:
@@ -62,7 +82,7 @@ class SentenceSink(Protocol):
 
 
 class Speaker(Protocol):
-    def say(self, text: str) -> Playout:
+    def say(self, text: str, *, interruptible: bool = True) -> Playout:
         """一整段文字立即合成，排在已有的话后面播放。"""
         ...
 
@@ -86,6 +106,8 @@ class Orchestrator(Protocol):
     def on_command(
         self, command: CommandName, now_ms: int
     ) -> AsyncGenerator[OrchestratorEvent, None]: ...
+
+    async def truncate_interviewer_turn(self, spoken: str) -> None: ...
 
     async def checkpoint(self) -> None: ...
 
@@ -133,6 +155,9 @@ class VoiceDriver:
         self._inbox: asyncio.Queue[_UserTurn] = asyncio.Queue()
         self._sink: SentenceSink | None = None
         self._last: Playout | None = None
+        self._reply: list[Playout] = []  # 当前这段回答的各段播放（过渡语、正文）
+        self._new_reply = True
+        self._cut = False  # 当前这段回答被打断了
 
     def user_turn(self, text: str, start_ms: int, end_ms: int) -> None:
         self._inbox.put_nowait(_UserTurn(text, start_ms, max(start_ms, end_ms)))
@@ -142,7 +167,7 @@ class VoiceDriver:
         orchestrator = self._orchestrator
         try:
             if orchestrator.state is None:
-                self._last = self._speaker.say(DISCLOSURE[self._language])
+                self._last = self._speaker.say(DISCLOSURE[self._language], interruptible=False)
                 events = orchestrator.start(self._clock.now_ms())
             else:
                 self._last = self._speaker.say(RESUME[self._language])
@@ -154,8 +179,10 @@ class VoiceDriver:
                     turn = await asyncio.wait_for(self._inbox.get(), self._tick_interval_s)
                 except TimeoutError:
                     _raise_if_cancelling()
+                    await self._settle_cut()
                     events = orchestrator.on_tick(self._clock.now_ms())
                 else:
+                    await self._settle_cut()
                     events = orchestrator.on_user_turn(turn.text, turn.start_ms, turn.end_ms)
                 if await self._forward(events):
                     return await self._finish()
@@ -168,6 +195,7 @@ class VoiceDriver:
             await orchestrator.aclose()
 
     async def _forward(self, events: AsyncGenerator[OrchestratorEvent, None]) -> bool:
+        self._new_reply = True
         try:
             return await self._relay(events)
         finally:
@@ -178,12 +206,17 @@ class VoiceDriver:
         async with aclosing(events) as stream:
             async for event in stream:
                 match event:
+                    case InterviewerSentence() if self._cut and not self._new_reply:
+                        pass  # 这段回答已被打断：后面生成的句子不再说
                     case InterviewerSentence(transition=True):
+                        self._start_reply()
                         self._close_sink()
-                        self._last = self._speaker.say(event.text)
+                        self._last = self._track(self._speaker.say(event.text))
                     case InterviewerSentence():
+                        self._start_reply()
                         if self._sink is None:
                             self._sink = self._speaker.stream()
+                            self._track(self._sink.playout)
                         self._sink.push(event.text + " ")
                     case InterviewerDone():
                         self._close_sink()
@@ -193,6 +226,38 @@ class VoiceDriver:
                     case _:
                         pass
         return False
+
+    def _start_reply(self) -> None:
+        if self._new_reply:
+            self._new_reply = False
+            self._reply = []
+            self._cut = False
+
+    def _track(self, playout: Playout) -> Playout:
+        self._reply.append(playout)
+        playout.on_done(self._on_playout_done)
+        return playout
+
+    def _on_playout_done(self, playout: Playout) -> None:
+        if not playout.interrupted or self._cut or playout not in self._reply:
+            return
+        self._cut = True
+        log.info("voice_interrupted", parts=len(self._reply))
+        # 排在它后面的段落（还没播或刚开始）不再播；前面的已经播完，不动
+        for other in self._reply[self._reply.index(playout) + 1 :]:
+            other.interrupt()
+        self._close_sink()
+
+    async def _settle_cut(self) -> None:
+        """上一段回答被打断过：等各段都停下，把实际播出的文字交给编排器截断。"""
+        if not self._cut:
+            return
+        reply, self._reply, self._cut = self._reply, [], False
+        for playout in reply:
+            await playout.wait()
+        separator = " " if self._language == Language.EN else ""
+        spoken = separator.join(text for p in reply if (text := p.spoken.strip()))
+        await self._orchestrator.truncate_interviewer_turn(spoken)
 
     def _close_sink(self) -> None:
         if self._sink is not None:
