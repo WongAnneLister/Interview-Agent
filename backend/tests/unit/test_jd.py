@@ -11,13 +11,20 @@ import httpx
 import pytest
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from pydantic import ValidationError
+from sqlalchemy.ext.asyncio import create_async_engine
+from sqlalchemy.pool import StaticPool
+from sqlite_helpers import create_tables
 from structlog.testing import capture_logs
 from test_api import USER, error_of, fake_resources, make_settings, open_client
 from test_api import exporter as exporter
 
 from interview.api.app import create_app
 from interview.api.deps import get_jd_llm, routes_without_user
-from interview.db.models import UsageRole
+from interview.api.resources import Resources
+from interview.config import Settings
+from interview.db.models import JobDescription, UsageRole, User
+from interview.db.session import make_sessionmaker
+from interview.domain import jd_library
 from interview.domain.jd import JDParsed, JDText, parse_jd
 from interview.observability import usage
 from interview.prompts.loader import DATA_NOTICE
@@ -159,7 +166,23 @@ async def test_retry_limit_and_logs_hide_text() -> None:
 @pytest.fixture
 async def api() -> AsyncIterator[tuple[httpx.AsyncClient, FakeLLM]]:
     llm = FakeLLM(reply=json.dumps(payload()))
-    app = create_app(make_settings(), resource_factory=fake_resources(), init_observability=False)
+    engine = create_async_engine("sqlite+aiosqlite://", poolclass=StaticPool)
+    async with engine.begin() as conn:
+        await create_tables(conn, User, JobDescription)
+    sessionmaker = make_sessionmaker(engine)
+    async with sessionmaker() as session:
+        session.add(User(id=USER, email="local@example.com"))
+        await session.commit()
+    settings = make_settings()
+
+    def factory(current: Settings) -> Resources:
+        return Resources(
+            settings=current,
+            sessionmaker=sessionmaker,
+            providers=ProviderRegistry(current.providers),
+        )
+
+    app = create_app(settings, resource_factory=factory, init_observability=False)
 
     def provider() -> LLMProvider:
         return llm
@@ -168,13 +191,40 @@ async def api() -> AsyncIterator[tuple[httpx.AsyncClient, FakeLLM]]:
     assert routes_without_user(app) == []
     async with open_client(app) as client:
         yield client, llm
+    await engine.dispose()
 
 
 async def test_api_returns_preview(api: tuple[httpx.AsyncClient, FakeLLM]) -> None:
     client, _llm = api
     response = await client.post("/api/jd/parse", json={"text": JD})
     assert response.status_code == 200
-    assert response.json() == JDParsed.model_validate(payload()).model_dump()
+    body = response.json()
+    assert body.pop("reused") is False and body.pop("jd_id")
+    assert body == JDParsed.model_validate(payload()).model_dump()
+
+
+async def test_same_jd_is_parsed_only_once(api: tuple[httpx.AsyncClient, FakeLLM]) -> None:
+    # C47：同一份 JD 再贴（多了空白、换行不同也算）直接复用，不再调用模型
+    client, llm = api
+    first = (await client.post("/api/jd/parse", json={"text": JD})).json()
+    again = (await client.post("/api/jd/parse", json={"text": f"  {JD}\n\n"})).json()
+    assert len(llm.calls) == 1
+    assert again["reused"] is True and again["jd_id"] == first["jd_id"]
+    other = (await client.post("/api/jd/parse", json={"text": JD + "，熟悉 Go"})).json()
+    assert other["reused"] is False and len(llm.calls) == 2
+    saved = (await client.get("/api/jd/saved")).json()
+    assert [item["id"] for item in saved] == [other["jd_id"], first["jd_id"]]
+    assert saved[1]["text"] == f"  {JD}\n\n" and saved[1]["title"]
+
+
+async def test_new_prompt_version_reparses(
+    api: tuple[httpx.AsyncClient, FakeLLM], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client, llm = api
+    await client.post("/api/jd/parse", json={"text": JD})
+    monkeypatch.setattr(jd_library, "current_version", lambda: 999)
+    response = (await client.post("/api/jd/parse", json={"text": JD})).json()
+    assert response["reused"] is False and len(llm.calls) == 2
 
 
 @pytest.mark.parametrize("text", ["", "  ", "字" * 10001])

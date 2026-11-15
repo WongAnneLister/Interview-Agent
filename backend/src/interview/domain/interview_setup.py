@@ -18,7 +18,7 @@ from interview.db.models import (
     Language,
     Plan,
 )
-from interview.domain.jd import parse_jd
+from interview.domain.jd import JDParsed, parse_jd
 from interview.domain.plan import (
     InterviewPlan,
     InterviewRepository,
@@ -53,9 +53,11 @@ async def build_plan(
     resume: ResumeParsed,
     settings: InterviewSettings,
     interview_id: uuid.UUID,
+    jd: JDParsed | None = None,
 ) -> BuiltPlan:
-    """解析 JD 并生成计划；结构化输出失败时抛 StructuredOutputError，由调用方处理。"""
-    jd = (await parse_jd(jd_llm, settings.jd_text, interview_id=interview_id)).value
+    """解析 JD（已经解析好的直接传 jd）并生成计划；结构化输出失败时抛 StructuredOutputError。"""
+    if jd is None:
+        jd = (await parse_jd(jd_llm, settings.jd_text, interview_id=interview_id)).value
     plan = await generate_plan(
         plan_llm,
         jd=jd,

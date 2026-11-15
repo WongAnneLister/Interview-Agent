@@ -22,6 +22,7 @@ from interview.config import Settings
 from interview.db.models import (
     Interview,
     InterviewStatus,
+    JobDescription,
     Plan,
     Resume,
     UsageRole,
@@ -140,7 +141,7 @@ class Api:
 async def api(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[Api]:
     engine = create_async_engine("sqlite+aiosqlite://", poolclass=StaticPool)
     async with engine.begin() as conn:
-        await create_tables(conn, User, Resume, Interview, Plan)
+        await create_tables(conn, User, Resume, Interview, Plan, JobDescription)
     sessionmaker = make_sessionmaker(engine)
     async with sessionmaker() as session:
         session.add(User(id=USER, email="local@example.com"))

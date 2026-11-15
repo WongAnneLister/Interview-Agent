@@ -41,6 +41,7 @@ from interview.db.models import (
 )
 from interview.domain.interview_setup import InterviewSettings, build_plan, persist_interview
 from interview.domain.jd import JDText
+from interview.domain.jd_library import parsed_jd
 from interview.domain.orchestrator_store import TurnRepository
 from interview.domain.plan import (
     InterviewRepository,
@@ -303,12 +304,21 @@ async def create_interview(
         duration_min=body.duration_min,
     )
     try:
+        # 同一份 JD 预览时已经解析过：直接复用，不再调用模型（C47）
+        saved = await parsed_jd(
+            resources.sessionmaker,
+            jd_llm,
+            user_id=user_id,
+            text=body.jd_text,
+            interview_id=interview_id,
+        )
         built = await build_plan(
             jd_llm=jd_llm,
             plan_llm=plan_llm,
             resume=resume,
             settings=settings,
             interview_id=interview_id,
+            jd=saved.parsed,
         )
     except StructuredOutputError as exc:
         log.warning(

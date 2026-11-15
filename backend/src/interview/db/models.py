@@ -200,6 +200,28 @@ class Resume(UserOwned, Base):
     updated_at: Mapped[datetime] = _updated_at()
 
 
+class JobDescription(UserOwned, Base):
+    """解析过的职位描述：同一用户再贴同一份 JD 时直接复用，不再调用模型（C47）。"""
+
+    __tablename__ = "job_descriptions"
+    __table_args__ = (
+        UniqueConstraint("user_id", "text_sha256"),
+        Index("ix_job_descriptions_user_id_updated_at", "user_id", "updated_at"),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    user_id: Mapped[uuid.UUID] = _owner_fk()
+    text: Mapped[str] = mapped_column(Text)
+    # 规范化（去首尾空白、合并空白）后正文的 SHA-256：多一个空格、换行不同也算同一份
+    text_sha256: Mapped[str] = mapped_column(String(64))
+    title: Mapped[str | None] = mapped_column(String(200))
+    parsed_json: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    # 解析用的 jd_parse 提示词版本；提示词升级后旧结果作废，下次使用时重新解析
+    prompt_version: Mapped[int]
+    created_at: Mapped[datetime] = _created_at()
+    updated_at: Mapped[datetime] = _updated_at()
+
+
 class Interview(UserOwned, Base):
     __tablename__ = "interviews"
     __table_args__ = (

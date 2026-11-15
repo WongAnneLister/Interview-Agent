@@ -25,6 +25,7 @@ def test_all_expected_tables_exist() -> None:
         "users",
         "resumes",
         "interviews",
+        "job_descriptions",
         "plans",
         "turns",
         "evaluations",
