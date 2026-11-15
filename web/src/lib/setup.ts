@@ -92,3 +92,17 @@ export function savedResumeLabel(resume: SavedResume): {
     .join(" · ");
   return { title, detail, named };
 }
+
+export type SavedJd = components["schemas"]["SavedJDSummary"];
+
+/** 已保存职位描述在列表里的两行文字：职位名称，再是正文开头和最近使用日期。 */
+export function savedJdLabel(jd: SavedJd): { title: string; detail: string } {
+  const firstLine =
+    jd.text
+      .split("\n")
+      .map((line) => line.trim())
+      .find((line) => line && line !== jd.title) ?? "";
+  const snippet = [...firstLine].length > 40 ? `${[...firstLine].slice(0, 40).join("")}…` : firstLine;
+  const detail = [snippet, `${jd.updated_at.slice(0, 10)} 使用`].filter(Boolean).join(" · ");
+  return { title: jd.title || "未注明职位名称", detail };
+}

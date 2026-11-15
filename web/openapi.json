@@ -490,7 +490,7 @@
         "title": "InterviewerSentence",
         "type": "object"
       },
-      "JDParsed": {
+      "JDParseOut": {
         "properties": {
           "competencies": {
             "items": {
@@ -501,10 +501,19 @@
             "title": "Competencies",
             "type": "array"
           },
+          "jd_id": {
+            "format": "uuid",
+            "title": "Jd Id",
+            "type": "string"
+          },
           "level": {
             "description": "级别推断，无法判断时为空",
             "title": "Level",
             "type": "string"
+          },
+          "reused": {
+            "title": "Reused",
+            "type": "boolean"
           },
           "tech_terms": {
             "description": "技术术语，最多 30 个，每个不超过 20 字符",
@@ -524,9 +533,11 @@
           "title",
           "level",
           "competencies",
-          "tech_terms"
+          "tech_terms",
+          "jd_id",
+          "reused"
         ],
-        "title": "JDParsed",
+        "title": "JDParseOut",
         "type": "object"
       },
       "JDText": {
@@ -1314,6 +1325,36 @@
         "title": "ResumeSummary",
         "type": "object"
       },
+      "SavedJDSummary": {
+        "properties": {
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "text",
+          "updated_at"
+        ],
+        "title": "SavedJDSummary",
+        "type": "object"
+      },
       "Stage": {
         "description": "与 PR-16 状态机的阶段名一致。",
         "enum": [
@@ -2018,7 +2059,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/JDParsed"
+                  "$ref": "#/components/schemas/JDParseOut"
                 }
               }
             },
@@ -2036,6 +2077,56 @@
           }
         },
         "summary": "Parse Jd Route",
+        "tags": [
+          "jd"
+        ]
+      }
+    },
+    "/api/jd/saved": {
+      "get": {
+        "description": "解析过的 JD，最近用过的在前。",
+        "operationId": "list_saved_jds_api_jd_saved_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 50,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/SavedJDSummary"
+                  },
+                  "title": "Response List Saved Jds Api Jd Saved Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Saved Jds",
         "tags": [
           "jd"
         ]

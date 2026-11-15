@@ -89,6 +89,11 @@ export function updateResume(
     }),
   );
 }
+export function listSavedJds(signal?: AbortSignal) {
+  return request(TIMEOUT_MS.standard, signal, (combined) =>
+    client.GET("/api/jd/saved", { signal: combined }),
+  );
+}
 export function parseJd(text: string, signal?: AbortSignal) {
   return request(TIMEOUT_MS.jd, signal, (combined) =>
     client.POST("/api/jd/parse", { body: { text }, signal: combined }),

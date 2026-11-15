@@ -108,6 +108,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/jd/saved": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Saved Jds
+         * @description 解析过的 JD，最近用过的在前。
+         */
+        get: operations["list_saved_jds_api_jd_saved_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/practice/days": {
         parameters: {
             query?: never;
@@ -435,15 +455,22 @@ export interface components {
              */
             type: "interviewer_sentence";
         };
-        /** JDParsed */
-        JDParsed: {
+        /** JDParseOut */
+        JDParseOut: {
             /** Competencies */
             competencies: components["schemas"]["Competency"][];
+            /**
+             * Jd Id
+             * Format: uuid
+             */
+            jd_id: string;
             /**
              * Level
              * @description 级别推断，无法判断时为空
              */
             level: string;
+            /** Reused */
+            reused: boolean;
             /**
              * Tech Terms
              * @description 技术术语，最多 30 个，每个不超过 20 字符
@@ -803,6 +830,23 @@ export interface components {
             id: string;
             /** Name */
             name: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /** SavedJDSummary */
+        SavedJDSummary: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Text */
+            text: string;
+            /** Title */
+            title: string;
             /**
              * Updated At
              * Format: date-time
@@ -1208,7 +1252,38 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["JDParsed"];
+                    "application/json": components["schemas"]["JDParseOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_saved_jds_api_jd_saved_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SavedJDSummary"][];
                 };
             };
             /** @description Validation Error */

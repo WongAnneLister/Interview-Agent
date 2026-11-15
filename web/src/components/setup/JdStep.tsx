@@ -2,10 +2,14 @@
 
 import { buttonPrimary, buttonSecondary, field, input } from "@/lib/styles";
 import type { components } from "@/lib/api/schema";
+import { savedJdLabel, type SavedJd } from "@/lib/setup";
 
 type Props = {
+  saved: SavedJd[] | null;
+  notice: string | null;
+  onPick: (text: string) => void;
   text: string;
-  preview: components["schemas"]["JDParsed"] | null;
+  preview: components["schemas"]["JDParseOut"] | null;
   previewText: string | null;
   canContinue: boolean;
   onChange: (text: string) => void;
@@ -48,6 +52,7 @@ export default function JdStep(props: Props) {
   const count = [...props.text].length;
   const valid = props.text.trim().length > 0 && count <= 10000;
   const stale = props.previewText !== null && props.previewText !== props.text;
+  const hasSaved = Boolean(props.saved && props.saved.length > 0);
 
   return (
     <section className="flex min-w-0 flex-col gap-8" aria-labelledby="jd-title">
@@ -56,9 +61,40 @@ export default function JdStep(props: Props) {
           目标职位
         </h2>
         <p className="mt-1 text-sm text-muted">
-          把职位描述整段贴进来，系统会从中整理出要考察的能力和权重。
+          {hasSaved
+            ? "选一份之前解析过的，或者贴一份新的职位描述。"
+            : "把职位描述整段贴进来，系统会从中整理出要考察的能力和权重。"}
         </p>
       </div>
+
+      {hasSaved && (
+        <ul className="border-t border-line" aria-label="解析过的职位描述">
+          {props.saved?.map((jd) => {
+            const label = savedJdLabel(jd);
+            const selected = jd.text === props.text;
+            return (
+              <li key={jd.id} className="border-b border-line">
+                <button
+                  type="button"
+                  aria-pressed={selected}
+                  onClick={() => props.onPick(jd.text)}
+                  className="group flex w-full min-w-0 cursor-pointer items-center gap-4 py-4 text-left"
+                >
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-ink group-hover:text-accent-ink">{label.title}</span>
+                    <span className="block truncate text-sm text-muted">{label.detail}</span>
+                  </span>
+                  <span
+                    className={`shrink-0 text-sm ${selected ? "text-accent" : "text-faint group-hover:text-ink"}`}
+                  >
+                    {selected ? "已选" : "使用"}
+                  </span>
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
 
       <div className="flex flex-col gap-3">
         <label className={field}>
@@ -99,6 +135,12 @@ export default function JdStep(props: Props) {
           )}
         </div>
       </div>
+
+      {props.notice && !stale && (
+        <p className="border-l-2 border-accent pl-3 text-sm text-muted" role="status">
+          {props.notice}
+        </p>
+      )}
 
       {stale && (
         <p className="border-l-2 border-warn pl-3 text-sm text-warn-ink" role="status">

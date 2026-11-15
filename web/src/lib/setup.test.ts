@@ -3,6 +3,7 @@ import {
   canAdvance,
   defaultSettings,
   resumeToDraft,
+  savedJdLabel,
   savedResumeLabel,
   toInterviewCreate,
   validateResume,
@@ -102,4 +103,22 @@ it("已保存简历第一行是文件名，第二行是姓名、职位和修改�
   expect(
     savedResumeLabel({ ...saved, name: " ", headline: "", file_name: null }),
   ).toEqual({ title: "未记录文件名", detail: "2026-11-14 更新", named: false });
+});
+
+it("saved JD label shows the title and the first line that is not the title", () => {
+  const jd = {
+    id: "j1",
+    title: "资深后端工程师",
+    text: "资深后端工程师\n\n【岗位职责】负责订单与支付核心系统的设计、开发和稳定性建设，带领小组攻坚",
+    updated_at: "2026-11-15T13:24:00Z",
+  };
+  expect(savedJdLabel(jd)).toEqual({
+    title: "资深后端工程师",
+    detail: "【岗位职责】负责订单与支付核心系统的设计、开发和稳定性建设，带领小组攻坚 · 2026-11-15 使用",
+  });
+  const long = { ...jd, title: "", text: "字".repeat(50) };
+  expect(savedJdLabel(long)).toEqual({
+    title: "未注明职位名称",
+    detail: `${"字".repeat(40)}… · 2026-11-15 使用`,
+  });
 });

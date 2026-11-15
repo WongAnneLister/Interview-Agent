@@ -13,6 +13,7 @@ import {
   createInterview,
   getResume,
   listResumes,
+  listSavedJds,
   parseJd,
   updateResume,
   uploadResume,
@@ -33,6 +34,7 @@ import {
   validateResume,
   validateResumeFile,
   type ResumeDraft,
+  type SavedJd,
   type SavedResume,
   type SetupSettings,
 } from "@/lib/setup";
@@ -95,8 +97,10 @@ export default function NewInterviewPage() {
   const [pickId, setPickId] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [jdText, setJdText] = useState("");
+  const [savedJds, setSavedJds] = useState<SavedJd[] | null>(null);
+  const [jdNotice, setJdNotice] = useState<string | null>(null);
   const [preview, setPreview] = useState<
-    components["schemas"]["JDParsed"] | null
+    components["schemas"]["JDParseOut"] | null
   >(null);
   const [previewText, setPreviewText] = useState<string | null>(null);
   const [settings, setSettings] = useState<SetupSettings>(defaultSettings);
@@ -109,11 +113,33 @@ export default function NewInterviewPage() {
     listResumes(signal).then(setSaved, () => undefined);
   }
 
+  function refreshSavedJds(signal?: AbortSignal) {
+    listSavedJds(signal).then(setSavedJds, () => undefined);
+  }
+
   useEffect(() => {
     const controller = new AbortController();
     refreshSaved(controller.signal);
+    refreshSavedJds(controller.signal);
     return () => controller.abort();
   }, []);
+
+  function previewJd(submittedText: string) {
+    if (!submittedText.trim() || [...submittedText].length > 10000) return;
+    setActivity("preview");
+    setJdNotice(null);
+    void request.run(
+      (signal) => parseJd(submittedText, signal),
+      (result) => {
+        setPreview(result);
+        setPreviewText(submittedText);
+        setJdNotice(
+          result.reused ? "这份职位描述之前解析过，已直接使用保存的结果，没有重新计费。" : null,
+        );
+        refreshSavedJds();
+      },
+    );
+  }
 
   function applyResume(result: ResumeOut, message: string | null) {
     setResumeId(result.id);
@@ -180,16 +206,7 @@ export default function NewInterviewPage() {
         },
       );
     } else if (next === "preview") {
-      if (!jdText.trim() || [...jdText].length > 10000) return;
-      const submittedText = jdText;
-      setActivity(next);
-      void request.run(
-        (signal) => parseJd(submittedText, signal),
-        (result) => {
-          setPreview(result);
-          setPreviewText(submittedText);
-        },
-      );
+      previewJd(jdText);
     } else {
       if (!resumeId || !canAdvance(3, state)) return;
       setActivity(next);
@@ -294,6 +311,14 @@ export default function NewInterviewPage() {
           {/* 步骤 2: 职位描述 */}
           {step === 1 && (
             <JdStep
+              saved={savedJds}
+              notice={jdNotice}
+              onPick={(text) => {
+                if (locked) return;
+                setJdText(text);
+                request.clearError();
+                previewJd(text);
+              }}
               text={jdText}
               preview={preview}
               previewText={previewText}
