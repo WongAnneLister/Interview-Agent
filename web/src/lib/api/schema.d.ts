@@ -108,6 +108,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/practice/days": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Practice Days
+         * @description 有练习的日子，按日期升序；没练的日子不返回。
+         */
+        get: operations["practice_days_api_practice_days_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/questions": {
         parameters: {
             query?: never;
@@ -522,6 +542,31 @@ export interface components {
              * @enum {string}
              */
             type: "pong";
+        };
+        /** PracticeDay */
+        PracticeDay: {
+            /** Answers */
+            answers: number;
+            /**
+             * Date
+             * Format: date
+             */
+            date: string;
+            /** Sessions */
+            sessions: components["schemas"]["PracticeSession"][];
+        };
+        /** PracticeSession */
+        PracticeSession: {
+            /** Answers */
+            answers: number;
+            /**
+             * Interview Id
+             * Format: uuid
+             */
+            interview_id: string;
+            /** Job Title */
+            job_title: string;
+            status: components["schemas"]["InterviewStatus"];
         };
         /** ProjectItem */
         ProjectItem: {
@@ -1164,6 +1209,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["JDParsed"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    practice_days_api_practice_days_get: {
+        parameters: {
+            query?: {
+                /** @description 浏览器的 IANA 时区名 */
+                tz?: string;
+                days?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PracticeDay"][];
                 };
             };
             /** @description Validation Error */

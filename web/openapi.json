@@ -709,6 +709,61 @@
         "title": "PongEvent",
         "type": "object"
       },
+      "PracticeDay": {
+        "properties": {
+          "answers": {
+            "title": "Answers",
+            "type": "integer"
+          },
+          "date": {
+            "format": "date",
+            "title": "Date",
+            "type": "string"
+          },
+          "sessions": {
+            "items": {
+              "$ref": "#/components/schemas/PracticeSession"
+            },
+            "title": "Sessions",
+            "type": "array"
+          }
+        },
+        "required": [
+          "date",
+          "answers",
+          "sessions"
+        ],
+        "title": "PracticeDay",
+        "type": "object"
+      },
+      "PracticeSession": {
+        "properties": {
+          "answers": {
+            "title": "Answers",
+            "type": "integer"
+          },
+          "interview_id": {
+            "format": "uuid",
+            "title": "Interview Id",
+            "type": "string"
+          },
+          "job_title": {
+            "title": "Job Title",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/InterviewStatus"
+          }
+        },
+        "required": [
+          "interview_id",
+          "job_title",
+          "status",
+          "answers"
+        ],
+        "title": "PracticeSession",
+        "type": "object"
+      },
       "ProjectItem": {
         "properties": {
           "highlights": {
@@ -1983,6 +2038,69 @@
         "summary": "Parse Jd Route",
         "tags": [
           "jd"
+        ]
+      }
+    },
+    "/api/practice/days": {
+      "get": {
+        "description": "有练习的日子，按日期升序；没练的日子不返回。",
+        "operationId": "practice_days_api_practice_days_get",
+        "parameters": [
+          {
+            "description": "浏览器的 IANA 时区名",
+            "in": "query",
+            "name": "tz",
+            "required": false,
+            "schema": {
+              "default": "UTC",
+              "description": "浏览器的 IANA 时区名",
+              "maxLength": 64,
+              "title": "Tz",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "days",
+            "required": false,
+            "schema": {
+              "default": 371,
+              "maximum": 400,
+              "minimum": 1,
+              "title": "Days",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/PracticeDay"
+                  },
+                  "title": "Response Practice Days Api Practice Days Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Practice Days",
+        "tags": [
+          "practice"
         ]
       }
     },

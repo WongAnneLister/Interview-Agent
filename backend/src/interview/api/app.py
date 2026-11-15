@@ -26,6 +26,7 @@ from interview.api.middleware import InterviewAPI
 from interview.api.resources import Resources, create_resources
 from interview.api.routes.interviews import router as interviews_router
 from interview.api.routes.jd import router as jd_router
+from interview.api.routes.practice import router as practice_router
 from interview.api.routes.questions import router as questions_router
 from interview.api.routes.resumes import router as resumes_router
 from interview.api.routes.text_ws import openapi_schemas
@@ -94,6 +95,7 @@ def create_app(
     app.include_router(jd_router)
     app.include_router(interviews_router)
     app.include_router(questions_router)
+    app.include_router(practice_router)
     app.include_router(text_ws_router)
     app.include_router(voice_router)
     app.extra_schemas = openapi_schemas()
