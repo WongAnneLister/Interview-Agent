@@ -251,7 +251,7 @@ async def test_full_generation_averages_final_only_and_replaces_final(
                 evidence_json=[],
                 detail_json={},
                 model="live",
-                prompt_version="evaluate_answer@1",
+                prompt_version="evaluate_answer@2",
             )
         )
         await session.commit()

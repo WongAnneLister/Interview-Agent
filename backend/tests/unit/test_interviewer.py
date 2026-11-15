@@ -27,6 +27,7 @@ from interview.domain.interviewer import (
     _task_text,
     appended_question,
     clean_output,
+    ends_with_question,
     english_fallback,
     is_mostly_chinese,
     speak,
@@ -461,23 +462,46 @@ async def test_logs_do_not_contain_generated_text_or_history() -> None:
     assert "PRIVATE_HISTORY" not in logged
 
 
-# ---- 提问时题目由代码念出（challenges C22）----
+# ---- 提问：模型接话并口语化提问，没问出来时代码补题目原文（C22、C44）----
 
 
-def test_ask_task_asks_for_transition_only() -> None:
+def test_ask_task_lets_the_model_respond_and_ask() -> None:
     text = _task_text(ASK)
-    assert "只说一句简短的过渡语" in text and "不要说出题目内容" in text
-    assert "不要复述" in text
+    assert "接住候选人上一轮说的一个具体点" in text
+    assert "以问号结尾的问句" in text and "条件和限定不能丢" in text
+    assert "下一道题：" in text
 
 
-def test_appended_question_only_for_ask_and_repeated_ask() -> None:
+def test_ends_with_question() -> None:
+    assert ends_with_question("How would you design it?")
+    assert ends_with_question("你会怎么设计？”")
+    assert not ends_with_question("Let's clarify that.")
+    assert not ends_with_question("")
+
+
+def test_appended_question_by_kind() -> None:
     question = "如何设计一个高可用的消息队列？"
     assert appended_question(directive("ask", Phase.TECHNICAL, question_text=question)) == question
     repeat = directive("repeat", Phase.TECHNICAL, repeat_of="ask", question_text=question)
     assert appended_question(repeat) == question
     follow = directive("follow_up", Phase.TECHNICAL, question_text=question, focus="失败重试")
-    assert appended_question(follow) is None
+    assert appended_question(follow) == "能再具体说说吗？"
+    assert appended_question(follow, Language.EN) == "Could you tell me a bit more about that?"
     assert appended_question(directive("ask", Phase.TECHNICAL, question_text=None)) is None
+    assert appended_question(directive("closing", Phase.CLOSING)) is None
+
+
+def test_clarify_explains_before_asking_again() -> None:
+    clarify = directive(
+        "repeat",
+        Phase.TECHNICAL,
+        repeat_of="ask",
+        question_text="如何设计？",
+        reason="user_clarify",
+    )
+    text = _task_text(clarify)
+    assert "没听懂" in text and "举一个小场景" in text
+    assert "换个说法再说一遍" not in text
 
 
 # ---- 说完把话轮交回候选人、不重复过渡语（PR-29 语音实测）----

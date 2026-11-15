@@ -129,7 +129,7 @@ async def test_evaluate_fixed_answer(capsys: pytest.CaptureFixture[str]) -> None
         results: list[EvaluationResult] = []
         for _ in range(15):
             result = await evaluate(llm, INPUT, interview_id=INTERVIEW_ID)
-            assert result.prompt_version == "evaluate_answer@1"
+            assert result.prompt_version == "evaluate_answer@2"
             assert result.next_action in NextAction
             assert result.score is None or 1 <= result.score <= 5
             kept, dropped = validate_evidence(

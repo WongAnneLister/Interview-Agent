@@ -9,6 +9,7 @@ import pytest
 from interview.domain.turn_intents import (
     TurnKeywords,
     ends_with_done,
+    is_clarify_request,
     is_repeat_request,
     is_think_request,
 )
@@ -30,6 +31,8 @@ from interview.domain.turn_intents import (
         "题目是什么",
         "嗯，再问一次",
         "不好意思没听懂",
+        "Sorry?",
+        "Sorry.",
     ],
 )
 def test_repeat_requests(text: str) -> None:
@@ -116,3 +119,38 @@ def test_empty_keyword_group_is_rejected(tmp_path: Path) -> None:
     broken.write_text("think:\n  zh: []\ndone:\n  zh: [说完了]\n", encoding="utf-8")
     with pytest.raises(ValueError, match="think"):
         TurnKeywords.load(broken)
+
+
+# ---- 反问题目的意思（C44）----
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "What is the real case?",
+        "What do you mean? I don't understand.",
+        "Could you explain that?",
+        "I don't get the question.",
+        "这个是什么意思",
+        "没懂你的意思",
+        "指的是哪个项目？",
+        "能举个例子吗",
+    ],
+)
+def test_clarify_requests(text: str) -> None:
+    assert is_clarify_request(text)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "",
+        "I don't know.",
+        "我不懂",
+        "这个我不会",
+        "Sorry, I am not sure what the root cause was, but we rolled back the release "
+        "and then added an alert on the queue depth so it would not happen again.",
+    ],
+)
+def test_not_clarify_requests(text: str) -> None:
+    assert not is_clarify_request(text)

@@ -931,6 +931,39 @@ async def test_repeat_request_repeats_question_without_evaluation(make_harness: 
     await harness.orchestrator.aclose()
 
 
+async def test_clarify_request_explains_without_evaluation(make_harness: Any) -> None:
+    # C44：“What is the real case?” 被当成回答交给评估，面试官直接换题
+    harness = await make_harness(actions=["next_question"])
+    await open_to_deep(harness)
+    before = harness.orchestrator.state
+    assert before is not None
+    eval_calls = len(harness.eval_llm.calls)
+    events = await collect(
+        harness.orchestrator.on_user_turn("What is the real case?", 10_000, 12_000)
+    )
+    after = harness.orchestrator.state
+    assert after is not None and after.current_question_id == before.current_question_id
+    assert len(harness.eval_llm.calls) == eval_calls
+    assert events_of(events, InterviewerDone)
+    prompt = json.dumps(harness.front.calls[-1]["messages"], ensure_ascii=False, default=str)
+    assert "没听懂" in prompt
+    await harness.orchestrator.aclose()
+
+
+async def test_question_is_appended_only_when_the_model_did_not_ask(make_harness: Any) -> None:
+    # 模型自己用问句把题问出来时不再补题目原文（C44），没问出来时照样补（C22）
+    asked = await make_harness(front_reply="说到 Ledger，你当时怎么保证对账准确？")
+    events = await open_to_deep(asked)
+    assert events_of(events, InterviewerDone)[-1].text == "说到 Ledger，你当时怎么保证对账准确？"
+    await asked.orchestrator.aclose()
+
+    plain = await make_harness(front_reply="好的，我们换个话题。")
+    events = await open_to_deep(plain)
+    text = events_of(events, InterviewerDone)[-1].text
+    assert text.startswith("好的，我们换个话题。") and len(text) > len("好的，我们换个话题。")
+    await plain.orchestrator.aclose()
+
+
 async def test_think_request_waits_silently_then_checks_in(make_harness: Any) -> None:
     # PR-30：“让我想想”进入等待，面试官不接话、不评估；思考超时后温和询问
     harness = await make_harness(actions=["next_question"])

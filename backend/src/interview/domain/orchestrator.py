@@ -48,7 +48,11 @@ from interview.domain.state_machine import (
 )
 from interview.domain.state_machine import start as machine_start
 from interview.domain.state_machine import step as machine_step
-from interview.domain.turn_intents import is_repeat_request, is_think_request
+from interview.domain.turn_intents import (
+    is_clarify_request,
+    is_repeat_request,
+    is_think_request,
+)
 from interview.observability.budget import BudgetStatus
 from interview.observability.tracing import OpenSpan, open_span
 from interview.providers.observed import CallContext
@@ -459,17 +463,28 @@ class InterviewOrchestrator:
                 self._track(saved)
                 # 明确的“请再说一遍 / 我想一下”不交给评估：评估失败或超时会按换题降级，
                 # 题目就被跳过了（C33）。照样记进转写，由状态机直接重复题目或进入等待（PR-30）
+                # 反问“什么意思”也不交给评估（C44：被当成回答直接换题），按重复处理但先解释
                 shortcut: Command | Think | None = None
+                intent = ""
                 if is_repeat_request(text):
-                    shortcut = Command(now_ms=end_ms, command="repeat")
+                    shortcut, intent = Command(now_ms=end_ms, command="repeat"), "repeat"
+                elif is_clarify_request(text):
+                    shortcut, intent = Command(now_ms=end_ms, command="repeat"), "clarify"
                 elif is_think_request(text, self._config.keywords):
-                    shortcut = Think(now_ms=end_ms)
+                    shortcut, intent = Think(now_ms=end_ms), "think"
                 if shortcut is not None:
                     await saved
-                    intent = "repeat" if isinstance(shortcut, Command) else "think"
                     span.span.set_attribute("turn.intent", intent)
                     with span.activate():
                         step = machine_step(plan, state, shortcut, self._config.machine)
+                    if intent == "clarify" and step.directive is not None:
+                        step = step.model_copy(
+                            update={
+                                "directive": step.directive.model_copy(
+                                    update={"reason": "user_clarify"}
+                                )
+                            }
+                        )
                     async with aclosing(
                         self._respond(
                             step,

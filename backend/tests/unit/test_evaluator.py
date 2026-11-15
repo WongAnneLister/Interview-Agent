@@ -150,7 +150,7 @@ async def test_normal_evaluation_keeps_valid_evidence() -> None:
     assert result.evidence_retried is False
     assert result.action_overridden is False
     assert result.model == "fake-llm"
-    assert result.prompt_version == "evaluate_answer@1"
+    assert result.prompt_version == "evaluate_answer@2"
     assert result.latency_ms >= 0
     assert result.retries == 0
     assert len(llm.calls) == 1
@@ -435,7 +435,7 @@ async def test_span_attributes_and_metrics(
     latency = attrs["evaluator.latency_ms"]
     assert isinstance(latency, int) and latency >= 0
     assert attrs["prompt.id"] == "evaluate_answer"
-    assert attrs["prompt.version"] == 1
+    assert attrs["prompt.version"] == 2
     assert attrs["agent.role"] == "eval"
     assert attrs["interview.id"] == str(INTERVIEW_ID)
 

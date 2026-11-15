@@ -47,6 +47,12 @@ _EN_FALLBACK: Mapping[str, str] = {
     "closing": "Thank you for your time today. Your report will be ready shortly. Goodbye.",
 }
 _EN_DEFAULT_FALLBACK = "Could you tell me a bit more about that?"
+# 追问、换说法之后模型没把问题问出来时补的一句（C44 实测只说了 “Let's clarify that.”）
+_FOLLOW_UP_FALLBACK: Mapping[Language, str] = {
+    Language.EN: _EN_DEFAULT_FALLBACK,
+    Language.ZH: "能再具体说说吗？",
+}
+_QUESTION_END = re.compile(r"[?？][\s”’」』）)]*$")
 
 _PHASE_LABELS: Mapping[Phase, str] = {
     Phase.OPENING: "开场",
@@ -95,6 +101,13 @@ _CONVERSE_HANDBACK: Mapping[Phase, str] = {
 }
 
 
+# 候选人反问“什么意思”时（C44 实测被当成回答直接换题）
+_CLARIFY_LEAD = (
+    "候选人没听懂上一条内容，在反问。先用一两句更简单、更具体的话解释它在问什么，"
+    "可以举一个小场景帮助理解；不给答案，不提示要点。然后再把问题问一遍。"
+)
+
+
 def _with_reason(text: str, reason: Reason | None) -> str:
     hint = _REASON_HINTS.get(reason) if reason is not None else None
     return f"{text}\n提示：{hint}" if hint else text
@@ -115,15 +128,18 @@ def _base_task(directive: Directive) -> str:
             text += f"从 {directive.transition_from.value} 过渡到 {phase.value}。"
         return text
     if directive.kind == "ask":
-        # 题目原文由代码接在后面念出（appended_question），模型只说过渡语（challenges C22）
+        # 原来只让模型说过渡语、题目原文由代码照念（C22），听起来像照单念题（C44）。
+        # 现在让模型接住候选人的话、用口语把题问出来；没以问句结尾时代码再补上题目原文
         text = (
-            "只说一句简短的过渡语，自然地引出下一道题；"
-            "不要说出题目内容，也不要提问，题目会紧接着念出。"
+            "先用半句话接住候选人上一轮说的一个具体点（只复述或回应，不评价对错）；"
+            "候选人上一轮说不会、没听清或只说了一两个字时跳过这半句。"
+            "然后用口语把下一道题问出来：意思和考察范围不变，题目里的条件和限定不能丢，"
+            "可以换说法、拆短句，但不要加提示或答案；最后一句必须是以问号结尾的问句。"
         )
         if directive.transition_from is not None:
-            text += f"这句话从 {directive.transition_from.value} 过渡到 {phase.value}。"
+            text += f"这是从 {directive.transition_from.value} 进入 {phase.value}，先用半句话点明。"
         if question:
-            text += f"\n下一道题（只用来让过渡语衔接自然，不要复述）：{question}"
+            text += f"\n下一道题：{question}"
         return text
     if directive.kind == "follow_up":
         parts = ["围绕追问方向追问一句，不要把追问方向原样念出来。"]
@@ -151,23 +167,40 @@ def _base_task(directive: Directive) -> str:
     return "按指令继续。"
 
 
-def appended_question(directive: Directive) -> str | None:
-    """需要由代码接在模型输出后面念出的题目原文：提问（含重复提问）时才有。"""
+def ends_with_question(text: str) -> bool:
+    """这句话是不是以问句结尾（看最后的问号，忽略收尾的引号括号）。"""
+    return bool(_QUESTION_END.search(text.strip()))
+
+
+def appended_question(directive: Directive, language: Language = Language.ZH) -> str | None:
+    """模型的话没以问句结尾时，由代码接在后面念出的问题。
+
+    提问（含重复、解释）补题目原文，保证题目一定被问出来（C22）；
+    追问补一句通用的“能再具体说说吗”，免得只说了半句过渡就停下（C44）。
+    """
     kind = directive.repeat_of if directive.kind == "repeat" else directive.kind
-    return directive.question_text or None if kind == "ask" else None
+    if kind == "ask":
+        return directive.question_text or None
+    if kind == "follow_up":
+        return _FOLLOW_UP_FALLBACK[language]
+    return None
 
 
 def _task_text(directive: Directive) -> str:
     if directive.kind == "repeat":
+        lead = (
+            _CLARIFY_LEAD
+            if directive.reason == "user_clarify"
+            else "把上一条内容换个说法再说一遍。"
+        )
+        reason = None if directive.reason == "user_clarify" else directive.reason
         base_kind = directive.repeat_of
         if base_kind and base_kind != "repeat":
             base = directive.model_copy(
                 update={"kind": base_kind, "repeat_of": None, "reason": None}
             )
-            return _with_reason(
-                "把上一条内容换个说法再说一遍。" + _task_text(base), directive.reason
-            )
-        return _with_reason("把上一条内容换个说法再说一遍。", directive.reason)
+            return _with_reason(lead + _task_text(base), reason)
+        return _with_reason(lead, reason)
     return _with_reason(_base_task(directive), directive.reason)
 
 

@@ -54,6 +54,7 @@ Reason = Literal[
     "user_end",
     "wrap_up",
     "think_timeout",
+    "user_clarify",  # 候选人反问“什么意思”：解释后再问一遍（C44）
 ]
 
 

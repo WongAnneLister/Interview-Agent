@@ -36,6 +36,7 @@ _REPEAT_ZH = re.compile(
 _REPEAT_EN = re.compile(
     r"\b(say|ask|read) (it|that|the question) again\b"
     r"|\bsay again\b"
+    r"|^\W*(sorry|pardon)\W*$"  # 只说一句 “Sorry?” 是没听清（C44 实测）
     r"|\b(can|could|would) you (please )?repeat\b"
     r"|\bplease repeat\b|\brepeat (that|it|the question|please)\b"
     r"|\bcome again\b|\bpardon\b|\bone more time\b"
@@ -58,6 +59,32 @@ def is_repeat_request(text: str) -> bool:
     if not stripped or not _short(stripped):
         return False
     return bool(_REPEAT_ZH.search(stripped) or _REPEAT_EN.search(stripped))
+
+
+# 候选人没听懂题目、在反问（C44 实测 “What is the real case?” 被当成回答直接换题）
+_CLARIFY_ZH = re.compile(
+    r"什么意思|啥意思|(指|说)的是(什么|啥|哪)"
+    r"|没(太)?(懂|明白|理解)(你|您)?(的意思|说的|问的|题目|这个问题)"
+    r"|不(太)?(明白|理解)(你|您)?(的意思|说的|问的|题目|这个问题)"
+    r"|能(不能)?(解释|举个例子)|举个例子(吗|呢)?$"
+    # 单说“我不懂 / 不会”是在说不会答，交给评估（给提示或换题），不算反问
+)
+_CLARIFY_EN = re.compile(
+    r"\bwhat do you mean\b|\bwhat does (that|it|this|\w+) mean\b"
+    r"|^\W*what('?s| is| are) (the|a|an|that|this)\b"
+    r"|\b(can|could) you (please )?(explain|clarify|elaborate|give (me )?an example)\b"
+    r"|\bi (do ?n[o']?t|don't) (understand|get it|get the question|follow)\b"
+    r"|\bnot sure what you mean\b|\bwhat are you asking\b",
+    re.IGNORECASE,
+)
+
+
+def is_clarify_request(text: str) -> bool:
+    """候选人这一轮是不是在反问题目的意思（短句才算，长回答里顺带一句不算）。"""
+    stripped = text.strip()
+    if not stripped or not _short(stripped):
+        return False
+    return bool(_CLARIFY_ZH.search(stripped) or _CLARIFY_EN.search(stripped))
 
 
 _NOISE = re.compile(r"[\W_]+", re.UNICODE)  # 标点、空白：匹配时都忽略

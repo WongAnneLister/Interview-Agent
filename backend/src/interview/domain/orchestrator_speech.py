@@ -17,6 +17,7 @@ from interview.domain.interviewer import (
     HistoryTurn,
     InterviewerInput,
     appended_question,
+    ends_with_question,
     speak,
 )
 from interview.domain.orchestrator_events import InterviewerDelta, InterviewerSentence
@@ -90,8 +91,14 @@ class Speech:
                 yield InterviewerDelta(text=sentence)
                 yield InterviewerSentence(text=sentence)
             self.text = utterance.text
-            question = appended_question(self._directive)
-            if question and normalize_quote(question) not in normalize_quote(self.text):
+            question = appended_question(self._directive, self._language)
+            if (
+                question
+                and not ends_with_question(self.text)
+                and normalize_quote(question) not in normalize_quote(self.text)
+            ):
+                # 只记动作，不记台词：看模型多久会漏掉问题（C22、C44）
+                log.info("interviewer_question_appended", kind=self._directive.kind)
                 self.text = (
                     f"{self.text}{separator_for(self._language)}{question}"
                     if self.text

@@ -16,12 +16,12 @@
     "hash": "2368ed1335f3febe"
   },
   "evaluate_answer": {
-    "version": 1,
-    "hash": "906c99fff1a59216"
+    "version": 2,
+    "hash": "a2e30f541052c635"
   },
   "interviewer": {
-    "version": 3,
-    "hash": "8567f6d2bd2461df"
+    "version": 4,
+    "hash": "8d482c6f768bd6f1"
   },
   "jd_parse": {
     "version": 1,
