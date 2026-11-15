@@ -150,7 +150,7 @@ def test_turn_handling_starts_open_with_local_turn_detector() -> None:
     settings = make_settings()
     # 默认不在 0.5 秒的停顿处抢话；没说完时最多等 4 秒
     options = turn_handling(settings)
-    assert options.get("endpointing") == {"min_delay": 1.5, "max_delay": 4.0}
+    assert options.get("endpointing") == {"min_delay": 1.2, "max_delay": 3.0}
     detector = options.get("turn_detection")
     # 本机推理的 v1-mini：不把候选人音频发去 LiveKit Cloud
     assert isinstance(detector, TurnDetector) and detector.model == "turn-detector-v1-mini"
@@ -171,7 +171,7 @@ def test_turn_taker_switches_endpointing_only_on_change() -> None:
         taker.update(turn_state("check_in", Phase.TECHNICAL))
         taker.update(turn_state("pause", Phase.TECHNICAL))  # 还是短问题，不重复下发
         taker.update(turn_state("follow_up", Phase.TECHNICAL))
-    assert applied == [Endpointing(0.6, 2.0), Endpointing(1.5, 4.0)]
+    assert applied == [Endpointing(0.6, 2.0), Endpointing(1.2, 3.0)]
     entries = [e for e in logs if e["event"] == "turn_policy_applied"]
     assert [(e["kind"], e["directive"]) for e in entries] == [
         ("short", "check_in"),

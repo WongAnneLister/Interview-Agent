@@ -65,8 +65,10 @@ class TurnSettings(BaseSettings):
 
     short_min_delay_s: float = Field(default=0.6, gt=0, le=10)  # 确认类短问题（准备好了吗）
     short_max_delay_s: float = Field(default=2.0, gt=0, le=20)
-    open_min_delay_s: float = Field(default=1.5, gt=0, le=10)  # 开放回答
-    open_max_delay_s: float = Field(default=4.0, gt=0, le=20)  # 没说完的 3 秒停顿不被抢话
+    # 开放回答。原来 1.5 / 4.0，接话慢（C44：停下到问题出来 4–5 秒），降到 1.2 / 3.0；
+    # 代价是轮次模型认为没说完时，超过 3 秒的停顿会被接话
+    open_min_delay_s: float = Field(default=1.2, gt=0, le=10)
+    open_max_delay_s: float = Field(default=3.0, gt=0, le=20)
     think_timeout_s: float = Field(default=20.0, gt=0)  # 说“我想一下”后最多等多久再询问
     detector_enabled: bool = True  # 轮次检测模型（约 400 MB，make download-models）
     keywords_file: Path = DEFAULT_TURN_KEYWORDS_FILE  # “我想一下 / 我说完了”词表

@@ -49,7 +49,7 @@ def test_no_state_or_directive_is_open() -> None:
 def test_endpointing_values_come_from_settings() -> None:
     settings = TurnSettings.model_validate({})
     assert endpointing_for("short", settings) == Endpointing(0.6, 2.0)
-    assert endpointing_for("open", settings) == Endpointing(1.5, 4.0)
+    assert endpointing_for("open", settings) == Endpointing(1.2, 3.0)
     custom = TurnSettings.model_validate({"open_min_delay_s": 2.0, "open_max_delay_s": 5.0})
     assert endpointing_for("open", custom) == Endpointing(2.0, 5.0)
 
