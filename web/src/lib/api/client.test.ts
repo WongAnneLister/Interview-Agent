@@ -6,6 +6,7 @@ import {
   regenerateReport,
   getTranscript,
   getResume,
+  listResumes,
   parseJd,
   TIMEOUT_MS,
   updatePlan,
@@ -109,4 +110,15 @@ it("报告和转写请求使用标准超时及正确方法和路径", async () =
     "GET /api/interviews/id/transcript",
   ]);
   expect(timeout.mock.calls.map(call => call[0])).toEqual(Array(3).fill(TIMEOUT_MS.standard));
+});
+it("已保存简历列表用 GET /api/resumes 和标准超时", async () => {
+  const timeout = vi.spyOn(AbortSignal, "timeout");
+  const fetch = vi.fn(async (request: Request) => {
+    expect(request.method).toBe("GET");
+    expect(new URL(request.url).pathname).toBe("/api/resumes");
+    return Response.json([]);
+  });
+  vi.stubGlobal("fetch", fetch);
+  expect(await listResumes()).toEqual([]);
+  expect(timeout).toHaveBeenCalledWith(TIMEOUT_MS.standard);
 });

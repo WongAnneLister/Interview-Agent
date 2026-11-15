@@ -75,3 +75,18 @@ export function toInterviewCreate(
 ): components["schemas"]["InterviewCreate"] {
   return { resume_id: resumeId, jd_text: jdText, ...settings };
 }
+
+export type SavedResume = components["schemas"]["ResumeSummary"];
+
+/** 已保存简历在列表里的两行文字：谁的简历，以及职位、文件名和最近修改日期。 */
+export function savedResumeLabel(resume: SavedResume): {
+  title: string;
+  detail: string;
+} {
+  const title = resume.name.trim() || resume.file_name || "未注明姓名的简历";
+  const date = resume.updated_at.slice(0, 10);
+  const detail = [resume.headline, resume.file_name, `${date} 更新`]
+    .filter((part) => part)
+    .join(" · ");
+  return { title, detail };
+}

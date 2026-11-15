@@ -3,6 +3,7 @@ import {
   canAdvance,
   defaultSettings,
   resumeToDraft,
+  savedResumeLabel,
   toInterviewCreate,
   validateResume,
   validateResumeFile,
@@ -82,4 +83,23 @@ it("在请求前拒绝非 PDF 和超大文件", () => {
       size: 10 * 1024 * 1024 + 1,
     }),
   ).toContain("10 MB");
+});
+
+it("已保存简历显示姓名、职位、文件名和修改日期", () => {
+  const saved = {
+    id: "r1",
+    name: "Alex Chen",
+    headline: "Backend Engineer · Northwind Labs",
+    file_name: "alex.pdf",
+    created_at: "2026-11-01T08:00:00Z",
+    updated_at: "2026-11-14T09:30:00Z",
+  };
+  expect(savedResumeLabel(saved)).toEqual({
+    title: "Alex Chen",
+    detail: "Backend Engineer · Northwind Labs · alex.pdf · 2026-11-14 更新",
+  });
+  expect(
+    savedResumeLabel({ ...saved, name: " ", headline: "", file_name: null }),
+  ).toEqual({ title: "未注明姓名的简历", detail: "2026-11-14 更新" });
+  expect(savedResumeLabel({ ...saved, name: "" }).title).toBe("alex.pdf");
 });

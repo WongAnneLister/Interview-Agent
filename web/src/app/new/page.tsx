@@ -1,7 +1,7 @@
 "use client";
 
 import { buttonPrimary, buttonSecondary, panel } from "@/lib/styles";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ErrorNotice } from "@/components/ErrorNotice";
 import { LoadingNotice } from "@/components/LoadingNotice";
@@ -10,6 +10,8 @@ import JdStep from "@/components/setup/JdStep";
 import SettingsStep from "@/components/setup/SettingsStep";
 import {
   createInterview,
+  getResume,
+  listResumes,
   parseJd,
   updateResume,
   uploadResume,
@@ -30,13 +32,16 @@ import {
   validateResume,
   validateResumeFile,
   type ResumeDraft,
+  type SavedResume,
   type SetupSettings,
 } from "@/lib/setup";
 import { useRequest } from "@/lib/useRequest";
 
-type Activity = "upload" | "save" | "preview" | "create";
+type Activity = "pick" | "upload" | "save" | "preview" | "create";
+type ResumeOut = components["schemas"]["ResumeOut"];
 const steps = ["简历", "职位描述", "面试设置", "生成计划"];
 const loadingMessages: Record<Activity, string> = {
+  pick: "正在读取已保存的简历",
   upload: "正在解析简历（通常需要 10–30 秒）",
   save: "正在保存简历修改",
   preview: "正在解析职位描述，请稍候",
@@ -78,6 +83,9 @@ export default function NewInterviewPage() {
   const [resume, setResume] = useState<ResumeDraft | null>(null);
   const [resumeDirty, setResumeDirty] = useState(false);
   const [resumeErrors, setResumeErrors] = useState<Record<string, string>>({});
+  const [saved, setSaved] = useState<SavedResume[] | null>(null);
+  const [pickId, setPickId] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [jdText, setJdText] = useState("");
   const [preview, setPreview] = useState<
     components["schemas"]["JDParsed"] | null
@@ -88,6 +96,25 @@ export default function NewInterviewPage() {
   const [navigating, setNavigating] = useState(false);
   const locked = request.busy || navigating;
   const state = { resumeId, resumeDirty, jdText, previewText };
+
+  // 列表只是捷径：加载失败就当没有，照常上传
+  function refreshSaved(signal?: AbortSignal) {
+    listResumes(signal).then(setSaved, () => undefined);
+  }
+
+  useEffect(() => {
+    const controller = new AbortController();
+    refreshSaved(controller.signal);
+    return () => controller.abort();
+  }, []);
+
+  function applyResume(result: ResumeOut, message: string | null) {
+    setResumeId(result.id);
+    setResume(resumeToDraft(result.parsed));
+    setResumeDirty(false);
+    setResumeErrors({});
+    setNotice(message);
+  }
 
   function goTo(next: number) {
     if (locked || (next > 0 && !canAdvance(next - 1, state))) return;
@@ -102,9 +129,18 @@ export default function NewInterviewPage() {
     setFileError(next ? validateResumeFile(next) : null);
   }
 
-  function perform(next: Activity) {
+  function perform(next: Activity, id: string | null = pickId) {
     if (locked) return;
-    if (next === "upload") {
+    if (next === "pick") {
+      if (!id) return;
+      setPickId(id);
+      setActivity(next);
+      void request.run(
+        (signal) => getResume(id, signal),
+        (result) =>
+          applyResume(result, "已选用保存的简历，可以直接下一步，也可以修改后保存。"),
+      );
+    } else if (next === "upload") {
       if (!file) return;
       const invalid = validateResumeFile(file);
       setFileError(invalid);
@@ -113,10 +149,13 @@ export default function NewInterviewPage() {
       void request.run(
         (signal) => uploadResume(file, signal),
         (result) => {
-          setResumeId(result.id);
-          setResume(resumeToDraft(result.parsed));
-          setResumeDirty(false);
-          setResumeErrors({});
+          applyResume(
+            result,
+            result.reused
+              ? "这份文件之前上传过，已直接使用保存的解析结果，没有重新解析。"
+              : null,
+          );
+          refreshSaved();
         },
       );
     } else if (next === "save") {
@@ -130,6 +169,7 @@ export default function NewInterviewPage() {
         (result) => {
           setResume(resumeToDraft(result.parsed));
           setResumeDirty(false);
+          refreshSaved();
         },
       );
     } else if (next === "preview") {
@@ -206,6 +246,10 @@ export default function NewInterviewPage() {
           <legend className="sr-only">{steps[step]}</legend>
           {step === 0 && (
             <ResumeStep
+              saved={saved}
+              selectedId={resumeId}
+              notice={notice}
+              onPick={(id) => perform("pick", id)}
               file={file}
               fileError={fileError}
               draft={resume}
@@ -219,6 +263,7 @@ export default function NewInterviewPage() {
               onChange={(draft) => {
                 setResume(draft);
                 setResumeDirty(true);
+                setNotice(null);
                 setResumeErrors({});
                 request.clearError();
               }}

@@ -63,6 +63,11 @@ export function uploadResume(file: File, signal?: AbortSignal) {
     }),
   );
 }
+export function listResumes(signal?: AbortSignal) {
+  return request(TIMEOUT_MS.standard, signal, (combined) =>
+    client.GET("/api/resumes", { signal: combined }),
+  );
+}
 export function getResume(id: string, signal?: AbortSignal) {
   return request(TIMEOUT_MS.standard, signal, (combined) =>
     client.GET("/api/resumes/{resume_id}", {
