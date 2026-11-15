@@ -964,6 +964,22 @@ async def test_question_is_appended_only_when_the_model_did_not_ask(make_harness
     await plain.orchestrator.aclose()
 
 
+async def test_interrupted_interviewer_turn_keeps_only_spoken_text(make_harness: Any) -> None:
+    # PR-31：转写和下一轮面试官看到的历史都只保留实际播出的部分
+    harness = await make_harness(front_reply="说到 Ledger，你当时怎么保证对账准确？")
+    await open_to_deep(harness)
+    await harness.orchestrator.truncate_interviewer_turn("说到 Ledger，")
+    turns = await fetch_turns(harness)
+    last = [t for t in turns if t.role == TurnRole.INTERVIEWER][-1]
+    assert (last.text, last.interrupted) == ("说到 Ledger，", True)
+    await collect(harness.orchestrator.on_user_turn("等一下，我先补充一点", 10_000, 12_000))
+    prompt = json.dumps(harness.front.calls[-1]["messages"], ensure_ascii=False, default=str)
+    assert "说到 Ledger，" in prompt and "怎么保证对账准确" not in prompt
+    # 再调一次没有可截的（已经截过）：不报错、不改别的发言
+    await harness.orchestrator.truncate_interviewer_turn("")
+    await harness.orchestrator.aclose()
+
+
 async def test_think_request_waits_silently_then_checks_in(make_harness: Any) -> None:
     # PR-30：“让我想想”进入等待，面试官不接话、不评估；思考超时后温和询问
     harness = await make_harness(actions=["next_question"])

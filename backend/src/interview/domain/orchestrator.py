@@ -99,6 +99,7 @@ class InterviewOrchestrator:
         self._language = Language.ZH
         self._picker = TransitionPicker(self._language, self._style)
         self._turns: list[TurnRecord] = []
+        self._last_interviewer_turn: uuid.UUID | None = None  # 被打断时截断它（PR-31）
         self._question_turns: dict[str, list[TranscriptTurn]] = {}
         self._ended_by_user = False
         self._ended_called = False
@@ -216,7 +217,25 @@ class InterviewOrchestrator:
             role=role, text=text, question_id=question_id, start_ms=start_ms, end_ms=end_ms
         )
         self._remember_turn(turn_id, role, text, question_id, phase, start_ms, end_ms)
+        if role == TurnRole.INTERVIEWER:
+            self._last_interviewer_turn = turn_id
         return turn_id
+
+    async def truncate_interviewer_turn(self, spoken: str) -> None:
+        """面试官上一段话被候选人打断：转写和下一轮的上下文都只保留实际播出的部分（PR-31）。"""
+        async with self._lock:
+            turn_id, self._last_interviewer_turn = self._last_interviewer_turn, None
+            if turn_id is None:
+                return
+            await self._store.mark_interrupted(turn_id, spoken)
+            for index in range(len(self._turns) - 1, -1, -1):
+                if self._turns[index].role == TurnRole.INTERVIEWER:
+                    self._turns[index] = self._turns[index].model_copy(update={"text": spoken})
+                    break
+            for turns in self._question_turns.values():
+                for index, turn in enumerate(turns):
+                    if turn.turn_id == turn_id:
+                        turns[index] = turn.model_copy(update={"text": spoken})
 
     def _remember_turn(
         self,

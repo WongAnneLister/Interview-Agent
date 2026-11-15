@@ -9,6 +9,7 @@ import pytest
 from interview.domain.turn_intents import (
     TurnKeywords,
     ends_with_done,
+    is_backchannel,
     is_clarify_request,
     is_repeat_request,
     is_think_request,
@@ -162,3 +163,20 @@ def test_clarify_requests(text: str) -> None:
 )
 def test_not_clarify_requests(text: str) -> None:
     assert not is_clarify_request(text)
+
+
+# ---- 应答词（PR-31，词表 config/turn_keywords.yaml 的 backchannel）----
+
+
+@pytest.mark.parametrize(
+    "text", ["嗯", "嗯嗯，对对。", "好的", "Uh-huh.", "yeah, right", "OK", "Mm-hmm, got it."]
+)
+def test_backchannels(text: str) -> None:
+    assert is_backchannel(text)
+
+
+@pytest.mark.parametrize(
+    "text", ["", "对，我们用了 Redis", "yes I built it", "是吗？", "好的，我想补充一点"]
+)
+def test_not_backchannels(text: str) -> None:
+    assert not is_backchannel(text)

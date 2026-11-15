@@ -177,6 +177,16 @@ class InterviewStore:
             self._turn_seq = seq
         return turn_id
 
+    async def mark_interrupted(self, turn_id: uuid.UUID, text: str) -> None:
+        """面试官被打断：只保留实际播出的文字（PR-31）。"""
+        async with self._lock, self._sessionmaker() as session:
+            turn = await TurnRepository(session, self._user_id).get(turn_id)
+            if turn is None:
+                return
+            turn.text = text
+            turn.interrupted = True
+            await session.commit()
+
     async def save_state(
         self,
         state: InterviewState,

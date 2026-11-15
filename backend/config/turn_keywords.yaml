@@ -4,6 +4,8 @@
 # think：候选人要求思考时间。只认短句（整句基本就是这句话），面试官不接话，
 #        等到 TURN_THINK_TIMEOUT_S 后温和询问。长回答里顺带说的“我想一下”不算。
 # done： 候选人明确说答完了。出现在一段转写的句尾时立即结束本轮，不再等停顿判定。
+# backchannel：应答词（PR-31）。面试官说话时候选人只说了这些词（可以连说几个），
+#        不打断面试官，也不当成一轮回答。英文词加引号：YAML 会把 yes / ok 解析成布尔值。
 
 think:
   zh:
@@ -44,3 +46,37 @@ done:
     - that's it
     - that's my answer
     - i'm finished
+
+backchannel:
+  zh:
+    - 嗯
+    - 嗯嗯
+    - 嗯哼
+    - 哦
+    - 噢
+    - 啊
+    - 对
+    - 对对
+    - 是
+    - 是的
+    - 好
+    - 好的
+    - 行
+    - 明白
+    - 了解
+  en:
+    - "uh-huh"
+    - "uh huh"
+    - "mm-hmm"
+    - "mhm"
+    - "mm"
+    - "hmm"
+    - "yeah"
+    - "yep"
+    - "yes"
+    - "right"
+    - "okay"
+    - "ok"
+    - "sure"
+    - "i see"
+    - "got it"

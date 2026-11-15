@@ -102,19 +102,24 @@ def _squash(text: str) -> str:
 class TurnKeywords:
     think: tuple[str, ...]
     done: tuple[str, ...]
+    backchannel: tuple[str, ...] = ()
 
     @classmethod
     def load(cls, path: Path) -> TurnKeywords:
         raw = cast(dict[str, Any], yaml.safe_load(path.read_text(encoding="utf-8")) or {})
 
-        def phrases(group: str) -> tuple[str, ...]:
+        def phrases(group: str, *, required: bool = True) -> tuple[str, ...]:
             by_language = cast(dict[str, list[str]], raw.get(group) or {})
-            items = [_squash(p) for words in by_language.values() for p in words or []]
-            if not items:
+            items = [_squash(str(p)) for words in by_language.values() for p in words or []]
+            if not items and required:
                 raise ValueError(f"{path}：{group} 词表为空")
             return tuple(sorted(set(items), key=len, reverse=True))
 
-        return cls(think=phrases("think"), done=phrases("done"))
+        return cls(
+            think=phrases("think"),
+            done=phrases("done"),
+            backchannel=phrases("backchannel", required=False),
+        )
 
 
 @lru_cache(maxsize=4)
@@ -142,3 +147,13 @@ def ends_with_done(text: str, keywords: TurnKeywords | None = None) -> bool:
     return bool(squashed) and any(
         squashed.endswith(phrase) for phrase in (keywords or default_keywords()).done
     )
+
+
+def is_backchannel(text: str, keywords: TurnKeywords | None = None) -> bool:
+    """整句只有应答词（“嗯”“对对”“uh-huh, yeah”），不算回答（PR-31）。"""
+    rest = _squash(text)
+    if not rest:
+        return False
+    for phrase in (keywords or default_keywords()).backchannel:  # 已按长度从长到短排好
+        rest = rest.replace(phrase, "")
+    return not rest
