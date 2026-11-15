@@ -281,3 +281,57 @@ async def test_no_debug_files_by_default(tmp_path: Path, monkeypatch: pytest.Mon
     monkeypatch.chdir(tmp_path)
     assert await run(FakeSTT(EVENTS, frames_per_event=5))
     assert not await asyncio.to_thread(lambda: list(tmp_path.iterdir()))
+
+
+class SlowSTT(FakeSTT):
+    """短回答：flush 时还没有任何中间结果，最终结果要过一阵才来（录音重放实测 2.6–6.3 秒）。"""
+
+    def __init__(self, delay_s: float) -> None:
+        super().__init__(provider="bailian", model="fun-asr-realtime")
+        self.delay_s = delay_s
+
+    def stream(self, audio: Any, **kwargs: Any) -> Any:
+        self.calls.append(kwargs)
+
+        async def body(stream: GeneratorStream[STTEvent, STTUsage]) -> AsyncGenerator[STTEvent]:
+            async for _ in audio:
+                pass
+            await asyncio.sleep(self.delay_s)
+            yield STTEvent(kind="final", text="I'm ready.", start_ms=0, end_ms=900)
+
+        return GeneratorStream(body)
+
+
+async def test_flush_without_any_text_waits_for_the_late_final(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # C42：没有文字时 LiveKit 不结束这一轮、等晚到的最终结果；0.3 秒就放弃会把整句话丢掉
+    monkeypatch.setattr(stt_plugin, "FLUSH_FINAL_WAIT_S", 0.1)
+    monkeypatch.setattr(stt_plugin, "FLUSH_EMPTY_WAIT_S", 3.0)
+    stream = ProviderSTT(SlowSTT(0.5), language=Language.EN).stream(conn_options=FAST)
+    for _ in range(5):
+        stream.push_frame(frame())
+    stream.flush()
+    final = await first_final(stream)
+    assert final.alternatives[0].text == "I'm ready."
+    await stream.aclose()
+
+
+async def test_flush_without_any_text_still_gives_up_eventually(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # 厂商一直不返回时也不能无限等：到上限就放弃这个任务，下一段音频照常开新任务
+    monkeypatch.setattr(stt_plugin, "FLUSH_EMPTY_WAIT_S", 0.2)
+    provider = SlowSTT(30)
+    stream = ProviderSTT(provider, language=Language.EN).stream(conn_options=FAST)
+    for _ in range(5):
+        stream.push_frame(frame())
+    stream.flush()
+    for _ in range(5):  # 太少的音频会被重采样攒着，凑不成一帧
+        stream.push_frame(frame())
+    for _ in range(60):  # 最多等 3 秒
+        if len(provider.calls) >= 2:
+            break
+        await asyncio.sleep(0.05)
+    assert len(provider.calls) == 2  # 放弃上一个任务后，新的音频开了新任务
+    await stream.aclose()

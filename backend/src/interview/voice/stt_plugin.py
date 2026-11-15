@@ -8,6 +8,9 @@
   每个任务的时间戳从 0 算，换任务时让基类按下一帧重新定锚。
 - flush 之后最多等 FLUSH_FINAL_WAIT_S（0.3 秒）拿最终结果，等不到就把最近一次中间结果
   当作最终结果、放弃这个任务；任务出错时也一样先保住中间结果再抛错。
+  flush 时一个字都还没识别出来（短回答，Fun-ASR 还没来得及出中间结果）则最多等
+  FLUSH_EMPTY_WAIT_S（8 秒）：这一轮没有文字时 LiveKit 不会结束这一轮，晚到的最终结果
+  会重新触发轮次判断；0.3 秒就放弃的话，这句话被整段丢掉，面试官一直等（C41 后的实测，C42）。
   实测长回答里 Fun-ASR 一直不断句，finish-task 之后十几秒不返回，判定说完被拖到 6–10 秒，
   超时后整段识别结果被丢弃，候选人说的话等于没说（PR-30 实测）。
 - 事件映射（参照官方 Deepgram 插件）：一句话的第一个 partial 之前发 START_OF_SPEECH，
@@ -50,6 +53,8 @@ SAMPLE_RATE = 16000
 # 面试官就总在回应上一轮（PR-30 实测，原来等 1.5 秒）。所以要远小于 min_delay；
 # Fun-ASR 的最终结果实测几乎从没在 1.5 秒内回来过，等于立即交出中间结果。
 FLUSH_FINAL_WAIT_S = 0.3
+# flush 时还没有任何文字时的等待上限（秒）。录音重放实测：音频结束后 2.6–6.3 秒才出最终结果（C42）
+FLUSH_EMPTY_WAIT_S = 8.0
 
 
 class ProviderSTT(stt.STT[Never]):  # 没有自定义事件
@@ -122,6 +127,8 @@ class _Stream(stt.RecognizeStream):
         self._billed_s = 0.0  # 当前任务已经通过 RECOGNITION_USAGE 上报的计费时长
         self._partial: STTEvent | None = None  # 当前这句最近的中间结果，还没有对应的最终结果
         self._deadline: asyncio.Timeout | None = None  # flush 后才开始计时
+        self._wait_s = FLUSH_FINAL_WAIT_S  # 本次 flush 实际等多久，记日志用
+        self._heard = False  # 当前任务是否已经交出过文字（中间或最终结果）
         self._recorder: SegmentRecorder | None = None
 
     async def _next_frame(self) -> rtc.AudioFrame | None:
@@ -162,8 +169,11 @@ class _Stream(stt.RecognizeStream):
 
     def _start_final_deadline(self) -> None:
         if self._deadline is not None:
+            # 已有文字：LiveKit 很快会结束这一轮，晚交会错位到下一轮（C38）；
+            # 还没有文字：LiveKit 在等这句话，宁可多等也不能丢（C42）
+            self._wait_s = FLUSH_FINAL_WAIT_S if self._heard else FLUSH_EMPTY_WAIT_S
             loop = asyncio.get_running_loop()
-            self._deadline.reschedule(loop.time() + FLUSH_FINAL_WAIT_S)
+            self._deadline.reschedule(loop.time() + self._wait_s)
 
     async def _run(self) -> None:
         self._input_ended = False
@@ -179,6 +189,7 @@ class _Stream(stt.RecognizeStream):
         owner = self._owner
         self._billed_s = 0.0
         self._partial = None
+        self._heard = False
         if owner._debug_dir is not None:  # pyright: ignore[reportPrivateUsage]
             owner._segments += 1  # pyright: ignore[reportPrivateUsage]
             self._recorder = SegmentRecorder(
@@ -207,8 +218,8 @@ class _Stream(stt.RecognizeStream):
                     if not deadline.expired():  # 厂商自己的超时（ProviderTimeout）照常往外抛
                         raise
                     # 退出 async with 时关闭厂商流，适配器放弃这个任务
-                    log.warning("stt_final_wait_expired", wait_s=FLUSH_FINAL_WAIT_S)
-                    self._note("final_wait_expired")
+                    log.warning("stt_final_wait_expired", wait_s=self._wait_s)
+                    self._note("final_wait_expired", wait_s=self._wait_s)
                     self._promote_partial()
                 finally:
                     self._deadline = None
@@ -244,6 +255,7 @@ class _Stream(stt.RecognizeStream):
         self._note(event.kind, text=event.text, start_ms=event.start_ms, end_ms=event.end_ms)
         if not event.text and event.kind == "partial":
             return
+        self._heard = self._heard or bool(event.text)
         if not self._speaking:
             self._speaking = True
             self._send(stt.SpeechEventType.START_OF_SPEECH)
