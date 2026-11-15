@@ -184,11 +184,17 @@ Index("uq_users_lower_email", func.lower(User.email), unique=True)
 
 class Resume(UserOwned, Base):
     __tablename__ = "resumes"
-    __table_args__ = (Index("ix_resumes_user_id_created_at", "user_id", "created_at"),)
+    __table_args__ = (
+        Index("ix_resumes_user_id_created_at", "user_id", "created_at"),
+        Index("ix_resumes_user_id_file_sha256", "user_id", "file_sha256"),
+    )
 
     id: Mapped[uuid.UUID] = _uuid_pk()
     user_id: Mapped[uuid.UUID] = _owner_fk()
     file_key: Mapped[str] = mapped_column(Text)  # 对象存储里的 key，不存 URL
+    file_name: Mapped[str | None] = mapped_column(String(255))  # 上传时的文件名，列表里显示
+    # 原件的 SHA-256：同一用户再传同一个文件时直接复用解析结果，不再调用模型
+    file_sha256: Mapped[str | None] = mapped_column(String(64))
     parsed_json: Mapped[dict[str, Any] | None] = mapped_column(JSONB)  # 解析前为空
     created_at: Mapped[datetime] = _created_at()
     updated_at: Mapped[datetime] = _updated_at()

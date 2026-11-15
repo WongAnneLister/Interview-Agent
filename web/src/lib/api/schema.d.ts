@@ -115,7 +115,11 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /**
+         * List Resumes
+         * @description 新建面试时选用已保存的简历。同一文件（指纹相同）只留最近修改的那份。
+         */
+        get: operations["list_resumes_api_resumes_get"];
         put?: never;
         /** Create Resume */
         post: operations["create_resume_api_resumes_post"];
@@ -633,12 +637,19 @@ export interface components {
              * Format: date-time
              */
             created_at: string;
+            /** File Name */
+            file_name: string | null;
             /**
              * Id
              * Format: uuid
              */
             id: string;
             parsed: components["schemas"]["ResumeParsed"];
+            /**
+             * Reused
+             * @default false
+             */
+            reused: boolean;
             /**
              * Updated At
              * Format: date-time
@@ -692,6 +703,30 @@ export interface components {
             skills: string[];
             /** Work */
             work: components["schemas"]["WorkItem"][];
+        };
+        /** ResumeSummary */
+        ResumeSummary: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** File Name */
+            file_name: string | null;
+            /** Headline */
+            headline: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Name */
+            name: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
         };
         /**
          * Stage
@@ -1093,6 +1128,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["JDParsed"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_resumes_api_resumes_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResumeSummary"][];
                 };
             };
             /** @description Validation Error */

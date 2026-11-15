@@ -5,7 +5,7 @@
 BACKEND := backend
 UV := uv run --directory $(BACKEND)
 
-.PHONY: help install fmt lint typecheck test check test-live hooks api worker obs-smoke migrate migration seed test-db cost hotwords benchmark recordings prompts-lock eval eval-quick \
+.PHONY: help install fmt lint typecheck test check test-live hooks api worker obs-smoke migrate migration seed test-db cost backfill-resume-hashes hotwords benchmark recordings prompts-lock eval eval-quick \
 	vps-deploy vps-env vps-ps vps-logs obs-up obs-down tunnel check-env fetch-livekit livekit \
 	web-lint web-typecheck web-test web-build web-dev web-check web-deps gen-types
 
@@ -29,6 +29,7 @@ help:
 	@echo "seed       创建本地用户并把 id 写入 .env 的 DEFAULT_USER_ID（需要隧道，先 migrate）"
 	@echo "test-db    数据库集成测试：建临时库、跑迁移和测试、结束后删除（需要隧道）"
 	@echo "cost       一场面试的成本拆解：make cost id=<面试ID>（需要隧道）"
+	@echo "backfill-resume-hashes  给旧简历补文件指纹，列表去重（需要隧道，一次性）"
 	@echo "hotwords   从文本文件创建百炼热词表并打印 id：make hotwords file=words.txt prefix=xxx"
 	@echo "benchmark  厂商实测（识别、合成、大模型），报告写入 docs/benchmarks/（会产生少量费用）"
 	@echo "recordings 把实测原始录音（data/raw/）转成 16 kHz 单声道 wav（data/asr/），已有的跳过"
@@ -124,6 +125,10 @@ test-db:
 cost:
 	@test -n "$(id)" || { echo "用法：make cost id=<面试ID>"; exit 1; }
 	$(UV) python tools/cost_report.py $(id)
+
+backfill-resume-hashes:
+	# 一次性：给加指纹之前上传的简历补上原件 SHA-256，列表里同一文件只显示一份
+	$(UV) python tools/backfill_resume_hashes.py
 
 hotwords:
 	@test -n "$(file)" -a -n "$(prefix)" || { echo "用法：make hotwords file=words.txt prefix=xxx"; exit 1; }

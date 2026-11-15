@@ -1,20 +1,25 @@
-"""简历上传、查看和修正。
+"""简历上传、列表、查看和修正。
 
 POST 收 multipart 的 file 字段：校验 PDF 与大小，抽取文字，原件放进 resumes 桶后再解析。
-解析或入库失败时删掉刚写入的原件。GET / PATCH 只返回当前用户自己的简历；
-别人的 id 与不存在一样，都是 404。PATCH 必须提交整份解析结果。
+同一用户再传内容完全相同的文件（SHA-256 一致）时直接返回已保存的那份，不调用模型（reused=true）。
+解析或入库失败时删掉刚写入的原件。GET 列表按最近使用排序，同一文件只出现一次。
+GET / PATCH 只返回当前用户自己的简历；别人的 id 与不存在一样，都是 404。PATCH 必须提交整份解析结果。
 """
 
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import uuid
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import Annotated
 
 import structlog
-from fastapi import APIRouter, Depends, File, UploadFile
+from fastapi import APIRouter, Depends, File, Query, UploadFile
 from pydantic import BaseModel
+from sqlalchemy import ColumnElement
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from interview.api.deps import (
     CurrentUserId,
@@ -49,9 +54,26 @@ log = structlog.get_logger(__name__)
 router = APIRouter(prefix="/api/resumes", tags=["resumes"])
 
 
+# 文件名只用来在列表里认出是哪份，过长的截断
+MAX_FILE_NAME = 255
+# 列表先多取一些再按文件去重，旧数据里同一文件可能存了很多份
+_LIST_SCAN = 200
+
+
 class ResumeOut(BaseModel):
     id: uuid.UUID
+    file_name: str | None
     parsed: ResumeParsed
+    created_at: datetime
+    updated_at: datetime
+    reused: bool = False  # 本次上传与已保存的简历是同一文件，没有重新解析
+
+
+class ResumeSummary(BaseModel):
+    id: uuid.UUID
+    file_name: str | None
+    name: str
+    headline: str  # 第一段工作经历的“职位 · 公司”，没有则为空
     created_at: datetime
     updated_at: datetime
 
@@ -60,16 +82,51 @@ def _http(exc: ResumeError) -> AppError:
     return AppError(exc.message, code=exc.code, status_code=exc.status_code)
 
 
-def _view(resume: Resume) -> ResumeOut:
+def _view(resume: Resume, *, reused: bool = False) -> ResumeOut:
     raw = resume.parsed_json
     if not isinstance(raw, dict):
         raise NotFoundError("简历不存在")
     return ResumeOut(
         id=resume.id,
+        file_name=resume.file_name,
         parsed=ResumeParsed.model_validate(raw),
         created_at=resume.created_at,
         updated_at=resume.updated_at,
+        reused=reused,
     )
+
+
+def _summary(resume: Resume, parsed: ResumeParsed) -> ResumeSummary:
+    first = parsed.work[0] if parsed.work else None
+    headline = " · ".join(part for part in (first.title, first.company) if part) if first else ""
+    return ResumeSummary(
+        id=resume.id,
+        file_name=resume.file_name,
+        name=parsed.name,
+        headline=headline,
+        created_at=resume.created_at,
+        updated_at=resume.updated_at,
+    )
+
+
+def _file_name(upload: UploadFile) -> str | None:
+    raw = (upload.filename or "").replace("\\", "/").rsplit("/", 1)[-1].strip()
+    return raw[:MAX_FILE_NAME] or None
+
+
+async def _recent(
+    session: AsyncSession, user_id: uuid.UUID, *where: ColumnElement[bool]
+) -> Sequence[Resume]:
+    """已解析完的简历，最近修改的在前。"""
+    query = ResumeRepository(session, user_id).select().where(*where)
+    rows = await session.scalars(query.order_by(Resume.updated_at.desc()).limit(_LIST_SCAN))
+    return [row for row in rows if isinstance(row.parsed_json, dict)]
+
+
+async def _saved_copy(resources: Resources, user_id: uuid.UUID, digest: str) -> ResumeOut | None:
+    async with resources.sessionmaker() as session:
+        found = await _recent(session, user_id, Resume.file_sha256 == digest)
+        return _view(found[0], reused=True) if found else None
 
 
 async def _owned(session: DbSession, user_id: uuid.UUID, resume_id: uuid.UUID) -> Resume:
@@ -119,6 +176,11 @@ async def create_resume(
         finally:
             await file.close()
         check_resume_file(data)
+        digest = hashlib.sha256(data).hexdigest()
+        saved = await _saved_copy(resources, user_id, digest)
+        if saved is not None:
+            log.info("resume_reused", resume_id=str(saved.id))
+            return saved
         # pypdf 是同步 CPU 计算，大文件可能要几秒，放到线程里避免卡住事件循环
         text = await asyncio.to_thread(extract_text, data)
     except ResumeError as exc:
@@ -149,6 +211,8 @@ async def create_resume(
                 id=resume_id,
                 user_id=user_id,
                 file_key=key,
+                file_name=_file_name(file),
+                file_sha256=digest,
                 parsed_json=parsed.value.model_dump(),
             )
             ResumeRepository(session, user_id).add(resume)
@@ -166,6 +230,26 @@ async def create_resume(
     finally:
         if stored:
             await _discard(storage, bucket, key, resume_id)
+
+
+@router.get("")
+async def list_resumes(
+    user_id: CurrentUserId,
+    session: DbSession,
+    limit: Annotated[int, Query(ge=1, le=50)] = 20,
+) -> list[ResumeSummary]:
+    """新建面试时选用已保存的简历。同一文件（指纹相同）只留最近修改的那份。"""
+    seen: set[str] = set()
+    result: list[ResumeSummary] = []
+    for resume in await _recent(session, user_id):
+        if resume.file_sha256 is not None:
+            if resume.file_sha256 in seen:
+                continue
+            seen.add(resume.file_sha256)
+        result.append(_summary(resume, ResumeParsed.model_validate(resume.parsed_json)))
+        if len(result) == limit:
+            break
+    return result
 
 
 @router.get("/{resume_id}")

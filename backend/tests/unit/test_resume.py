@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import uuid
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime
 from io import BytesIO
 from typing import Any, cast
 
@@ -29,6 +31,7 @@ from interview.domain.resume import (
     ResumeHasNoText,
     ResumeNotPdf,
     ResumeParsed,
+    ResumeRepository,
     ResumeTooLarge,
     check_resume_file,
     extract_text,
@@ -234,6 +237,7 @@ async def api() -> AsyncIterator[tuple[httpx.AsyncClient, MemoryObjectStore, Set
     app = create_app(settings, resource_factory=factory, init_observability=False)
     app.dependency_overrides[get_resume_llm] = override_llm
     holder = SettingsHolder(settings, store, llm, app)
+    holder.sessionmaker = sessionmaker
     async with open_client(app) as client:
         yield client, store, holder
     await engine.dispose()
@@ -247,6 +251,7 @@ class SettingsHolder:
         self.store = store
         self.llm = llm
         self.app = app
+        self.sessionmaker: async_sessionmaker[AsyncSession] | None = None
 
 
 def _upload(data: bytes, name: str = "resume.pdf") -> dict[str, tuple[str, bytes, str]]:
@@ -576,3 +581,109 @@ async def test_database_failure_does_not_log_resume_fields(
     logged = output.getvalue()
     assert "http_unhandled_error" in logged and "IntegrityError" in logged
     assert "PRIVATE_NAME" not in logged and "PRIVATE_SKILL" not in logged
+
+
+LONG_AGO = datetime(2026, 1, 1, tzinfo=UTC)
+OTHER_PDF = text_pdf(["Sam Lee", "Contoso, Data Engineer", "Skills: Python, Spark"])
+
+
+async def test_same_file_is_reused_without_parsing_again(
+    api: tuple[httpx.AsyncClient, MemoryObjectStore, SettingsHolder],
+) -> None:
+    client, store, holder = api
+    first = await client.post("/api/resumes", files=_upload(RESUME_PDF, "dir/简历.pdf"))
+    assert first.json()["reused"] is False
+    assert first.json()["file_name"] == "简历.pdf"
+    again = await client.post("/api/resumes", files=_upload(RESUME_PDF, "copy.pdf"))
+    assert again.status_code == 201
+    assert again.json()["reused"] is True
+    assert again.json()["id"] == first.json()["id"]
+    assert again.json()["file_name"] == "简历.pdf"
+    assert len(holder.llm.calls) == 1  # 第二次没有调用模型
+    assert len(store.objects) == 1
+
+    other = await client.post("/api/resumes", files=_upload(OTHER_PDF))
+    assert other.json()["reused"] is False
+    assert len(holder.llm.calls) == 2
+
+
+async def test_another_users_identical_file_is_parsed_for_them(
+    api: tuple[httpx.AsyncClient, MemoryObjectStore, SettingsHolder],
+) -> None:
+    client, _store, holder = api
+    await client.post("/api/resumes", files=_upload(RESUME_PDF))
+    holder.settings.app.default_user_id = uuid.uuid4()  # type: ignore[attr-defined]
+    assert (await client.get("/api/resumes")).json() == []
+    holder.settings.app.default_user_id = USER  # type: ignore[attr-defined]
+    assert len((await client.get("/api/resumes")).json()) == 1
+
+
+async def test_list_shows_recent_first_with_one_entry_per_file(
+    api: tuple[httpx.AsyncClient, MemoryObjectStore, SettingsHolder],
+) -> None:
+    client, _store, holder = api
+    assert (await client.get("/api/resumes")).json() == []
+    first = (await client.post("/api/resumes", files=_upload(RESUME_PDF, "a.pdf"))).json()
+    second = (await client.post("/api/resumes", files=_upload(OTHER_PDF, "b.pdf"))).json()
+    # 旧数据：同一文件存了两份（指纹相同），以及加指纹之前的一份（指纹为空）
+    assert holder.sessionmaker is not None
+    async with holder.sessionmaker() as session:
+        repo = ResumeRepository(session, USER)
+        original = await repo.get(uuid.UUID(first["id"]))
+        assert original is not None
+        for sha in (original.file_sha256, None):
+            repo.add(
+                Resume(
+                    user_id=USER,
+                    file_key="old.pdf",
+                    file_sha256=sha,
+                    parsed_json=PARSED,
+                    created_at=LONG_AGO,
+                    updated_at=LONG_AGO,
+                )
+            )
+        repo.add(Resume(user_id=USER, file_key="unparsed.pdf", parsed_json=None))
+        await session.commit()
+    await client.patch(f"/api/resumes/{first['id']}", json=PARSED)  # 最近修改的排最前
+
+    listed = (await client.get("/api/resumes")).json()
+    assert [item["id"] for item in listed[:2]] == [first["id"], second["id"]]
+    assert len(listed) == 3  # 同一文件只留一份，没有指纹的旧简历单独出现，未解析的不出现
+    assert listed[0] | {"created_at": None, "updated_at": None} == {
+        "id": first["id"],
+        "file_name": "a.pdf",
+        "name": "Alex Chen",
+        "headline": "Backend Engineer · Northwind Labs",
+        "created_at": None,
+        "updated_at": None,
+    }
+    assert listed[2]["file_name"] is None
+    assert len((await client.get("/api/resumes?limit=1")).json()) == 1
+    assert (await client.get("/api/resumes?limit=0")).status_code == 422
+
+
+async def test_backfill_fills_hashes_from_stored_originals() -> None:
+    from backfill_resume_hashes import backfill
+
+    engine = create_async_engine("sqlite+aiosqlite://", poolclass=StaticPool)
+    async with engine.begin() as conn:
+        await create_tables(conn, User, Resume)
+    sessionmaker = make_sessionmaker(engine)
+    store = MemoryObjectStore()
+    await store.put("resumes", "kept.pdf", RESUME_PDF, content_type="application/pdf")
+    async with sessionmaker() as session:
+        session.add(User(id=USER, email="local@example.com"))
+        await session.commit()
+    async with sessionmaker() as session:
+        repo = ResumeRepository(session, USER)
+        repo.add(Resume(user_id=USER, file_key="kept.pdf", parsed_json=PARSED))
+        repo.add(Resume(user_id=USER, file_key="gone.pdf", parsed_json=PARSED))
+        await session.commit()
+
+    assert await backfill(sessionmaker, store, bucket="resumes", user_id=USER) == (1, 1)
+    async with sessionmaker() as session:
+        rows = await ResumeRepository(session, USER).list()
+        hashes = {row.file_key: row.file_sha256 for row in rows}
+    assert hashes == {"kept.pdf": hashlib.sha256(RESUME_PDF).hexdigest(), "gone.pdf": None}
+    assert await backfill(sessionmaker, store, bucket="resumes", user_id=USER) == (0, 1)
+    await engine.dispose()

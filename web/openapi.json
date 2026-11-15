@@ -1039,6 +1039,17 @@
             "title": "Created At",
             "type": "string"
           },
+          "file_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "File Name"
+          },
           "id": {
             "format": "uuid",
             "title": "Id",
@@ -1046,6 +1057,11 @@
           },
           "parsed": {
             "$ref": "#/components/schemas/ResumeParsed"
+          },
+          "reused": {
+            "default": false,
+            "title": "Reused",
+            "type": "boolean"
           },
           "updated_at": {
             "format": "date-time",
@@ -1055,6 +1071,7 @@
         },
         "required": [
           "id",
+          "file_name",
           "parsed",
           "created_at",
           "updated_at"
@@ -1151,6 +1168,54 @@
           "education"
         ],
         "title": "ResumeReplacement",
+        "type": "object"
+      },
+      "ResumeSummary": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "file_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "File Name"
+          },
+          "headline": {
+            "title": "Headline",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "file_name",
+          "name",
+          "headline",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "ResumeSummary",
         "type": "object"
       },
       "Stage": {
@@ -1881,6 +1946,54 @@
       }
     },
     "/api/resumes": {
+      "get": {
+        "description": "新建面试时选用已保存的简历。同一文件（指纹相同）只留最近修改的那份。",
+        "operationId": "list_resumes_api_resumes_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 50,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ResumeSummary"
+                  },
+                  "title": "Response List Resumes Api Resumes Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Resumes",
+        "tags": [
+          "resumes"
+        ]
+      },
       "post": {
         "operationId": "create_resume_api_resumes_post",
         "requestBody": {
