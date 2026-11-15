@@ -1,13 +1,15 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { listPracticeDays } from "@/lib/api/client";
 import { interviewStatusLabels } from "@/lib/labels";
 import {
   buildCalendar,
   localToday,
+  maxOffset,
   practiceStats,
+  weeksFor,
   type CalendarCell,
   type PracticeDay,
 } from "@/lib/practice";
@@ -20,7 +22,7 @@ const levelClass = [
   "bg-accent-ink",
 ] as const;
 const weekdays = ["一", "二", "三", "四", "五", "六", "日"];
-const CELL = 14; // 格子 11px + 间距 3px
+const LABEL_WIDTH = 28; // 左边“一 三 五 日”那一列
 
 function dateLabel(date: string): string {
   const [, month, day] = date.split("-").map(Number);
@@ -84,12 +86,18 @@ function DayDetail({ day }: { day: PracticeDay }) {
   );
 }
 
+function rangeLabel(first: string, last: string): string {
+  const short = (date: string) => dateLabel(date).replace(/ 周.$/, "");
+  return `${short(first)} – ${short(last)}`;
+}
+
 export function PracticeCalendar() {
   const [days, setDays] = useState<PracticeDay[] | null>(null);
   const [failed, setFailed] = useState(false);
   const [hover, setHover] = useState<{ cell: CalendarCell; x: number; y: number } | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
-  const scroller = useRef<HTMLDivElement>(null);
+  const [width, setWidth] = useState(0);
+  const [offset, setOffset] = useState(0);
   const board = useRef<HTMLDivElement>(null);
   const today = useMemo(() => localToday(), []);
 
@@ -102,24 +110,46 @@ export function PracticeCalendar() {
     return () => controller.abort();
   }, []);
 
-  const calendar = useMemo(() => buildCalendar(days ?? [], today), [days, today]);
+  // 按可用宽度决定显示几周：手机三个月左右，电脑七个月左右，格子都在 22px 上下
+  useEffect(() => {
+    const el = board.current;
+    if (!el) return;
+    const observer = new ResizeObserver(([entry]) => {
+      if (entry) setWidth(Math.round(entry.contentRect.width));
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [failed]);
+
+  const weeks = width ? weeksFor(width, LABEL_WIDTH) : 0;
+  const page = Math.min(offset, maxOffset(weeks));
+  const calendar = useMemo(
+    () => buildCalendar(days ?? [], today, weeks || 1, page),
+    [days, today, weeks, page],
+  );
   const stats = useMemo(() => practiceStats(days ?? [], today), [days, today]);
   const chosen = days?.find((day) => day.date === selected) ?? null;
-
-  // 窄屏时日历比屏幕宽：默认滚到最右边，先看到最近的日子
-  useLayoutEffect(() => {
-    const el = scroller.current;
-    if (el) el.scrollLeft = el.scrollWidth;
-  }, [days]);
+  const firstDate = calendar.weeks[0]?.[0]?.date;
+  const lastWeek = calendar.weeks.at(-1) ?? [];
+  const lastDate = lastWeek.filter((cell) => !cell.future).at(-1)?.date;
 
   if (failed) return null; // 只是锦上添花，读不到就不显示，不打扰准备面试
 
   function show(cell: CalendarCell, target: HTMLElement) {
-    // 提示框约 150px 宽、以格子为中心：靠两边时往里收，不撑出横向滚动条
-    const width = board.current?.offsetWidth ?? 0;
-    const x = Math.min(Math.max(target.offsetLeft + 5.5, 76), width - 76);
+    // 提示框约 150px 宽、以格子为中心：靠两边时往里收，不超出日历
+    const x = Math.min(
+      Math.max(target.offsetLeft + target.offsetWidth / 2, 76),
+      width - 76,
+    );
     setHover({ cell, x, y: target.offsetTop });
   }
+
+  function move(step: number) {
+    setHover(null);
+    setOffset(Math.min(maxOffset(weeks), Math.max(0, page + step)));
+  }
+
+  const columns = { gridTemplateColumns: `${LABEL_WIDTH - 4}px repeat(${weeks || 1}, minmax(0, 1fr))` };
 
   return (
     <section className="flex min-w-0 flex-col gap-4" aria-labelledby="practice-title">
@@ -136,81 +166,114 @@ export function PracticeCalendar() {
         )}
       </div>
 
-      <div ref={scroller} className="-mx-1 overflow-x-auto px-1 pb-1">
-        <div
-          ref={board}
-          className="relative w-max"
-          onMouseLeave={() => setHover(null)}
-          style={{ minHeight: 7 * CELL + 22 }}
+      <div className="flex items-center justify-between gap-3 text-sm text-muted">
+        <button
+          type="button"
+          className="cursor-pointer px-1 hover:text-ink disabled:cursor-not-allowed disabled:text-faint"
+          disabled={!days || page >= maxOffset(weeks)}
+          onClick={() => move(weeks)}
         >
-          <div className="relative mb-1.5 ml-6 h-4 text-[11px] text-faint" aria-hidden="true">
-            {calendar.months.map((month) => (
-              <span key={month.column} className="absolute whitespace-nowrap" style={{ left: month.column * CELL }}>
-                {month.label}
-              </span>
-            ))}
-          </div>
-          <div className="flex gap-[3px]">
-            <div
-              className="mr-1 grid w-5 grid-rows-7 gap-[3px] text-[10px] leading-[11px] text-faint"
-              aria-hidden="true"
-            >
-              {weekdays.map((name, index) => (
-                <span key={name}>{index % 2 === 0 ? name : ""}</span>
+          ‹ 更早
+        </button>
+        <span className="font-serif text-ink tabular-nums">
+          {firstDate && lastDate ? rangeLabel(firstDate, lastDate) : ""}
+        </span>
+        <button
+          type="button"
+          className="cursor-pointer px-1 hover:text-ink disabled:cursor-not-allowed disabled:text-faint"
+          disabled={!days || page === 0}
+          onClick={() => move(-weeks)}
+        >
+          更近 ›
+        </button>
+      </div>
+
+      <div
+        ref={board}
+        className="relative"
+        onMouseLeave={() => setHover(null)}
+        style={{ minHeight: width ? undefined : 200 }}
+      >
+        {days && weeks > 0 && (
+          <div key={`${weeks}-${page}`} className="flex flex-col gap-1.5">
+            <div className="grid gap-1 text-[11px] text-faint" style={columns} aria-hidden="true">
+              {calendar.months.map((month) => (
+                <span
+                  key={month.column}
+                  className="whitespace-nowrap"
+                  style={{ gridColumn: month.column + 2, gridRow: 1 }}
+                >
+                  {month.label}
+                </span>
               ))}
             </div>
-            {days &&
-              calendar.weeks.map((week, column) => (
-                <div key={week[0]?.date} className="grid grid-rows-7 gap-[3px]">
-                  {week.map((cell, row) => {
-                    if (cell.future) return <span key={cell.date} className="size-[11px]" />;
-                    const isToday = cell.date === today;
-                    const motion = isToday ? "cell-today" : cell.level > 0 ? "cell-pop" : "cell-in";
-                    const style = { animationDelay: `${Math.min(900, (column + row) * 14)}ms` };
-                    const common = `size-[11px] rounded-[2px] ${levelClass[cell.level]} ${motion}`;
-                    if (cell.level === 0) {
-                      return (
-                        <span
-                          key={cell.date}
-                          className={common}
-                          style={style}
-                          onMouseEnter={(event) => show(cell, event.currentTarget)}
-                        />
-                      );
-                    }
+            <div className="grid grid-flow-col grid-rows-7 gap-1" style={columns}>
+              {weekdays.map((name, index) => (
+                <span
+                  key={name}
+                  aria-hidden="true"
+                  className="flex items-center text-[11px] text-faint"
+                  style={{ gridColumn: 1, gridRow: index + 1 }}
+                >
+                  {index % 2 === 0 ? name : ""}
+                </span>
+              ))}
+              {calendar.weeks.flatMap((week, column) =>
+                week.map((cell, row) => {
+                  const place = { gridColumn: column + 2, gridRow: row + 1 };
+                  if (cell.future) return <span key={cell.date} style={place} />;
+                  const isToday = cell.date === today;
+                  const motion = isToday ? "cell-today" : cell.level > 0 ? "cell-pop" : "cell-in";
+                  const style = {
+                    ...place,
+                    animationDelay: `${Math.min(700, (column + row) * 22)}ms`,
+                  };
+                  const common = `aspect-square w-full rounded-[4px] ${levelClass[cell.level]} ${motion}`;
+                  if (cell.level === 0) {
                     return (
-                      <button
+                      <span
                         key={cell.date}
-                        type="button"
-                        aria-label={`${dateLabel(cell.date)}，答了 ${cell.answers} 轮`}
-                        aria-pressed={selected === cell.date}
-                        className={`${common} cursor-pointer transition-transform duration-150 hover:scale-[1.35] focus-visible:scale-[1.35] aria-pressed:outline-2 aria-pressed:outline-offset-1 aria-pressed:outline-ink`}
+                        className={common}
                         style={style}
                         onMouseEnter={(event) => show(cell, event.currentTarget)}
-                        onFocus={(event) => show(cell, event.currentTarget)}
-                        onBlur={() => setHover(null)}
-                        onClick={() => setSelected((value) => (value === cell.date ? null : cell.date))}
                       />
                     );
-                  })}
-                </div>
-              ))}
-          </div>
-
-          {hover && (
-            <div
-              key={hover.cell.date}
-              role="tooltip"
-              className="tip-in pointer-events-none absolute z-10 rounded-md bg-ink px-2.5 py-1.5 text-xs whitespace-nowrap text-paper"
-              style={{ left: hover.x, top: hover.y - 34 }}
-            >
-              {dateLabel(hover.cell.date)}
-              <span className="ml-1.5 text-paper/70">
-                {hover.cell.answers ? `答了 ${hover.cell.answers} 轮` : "没有练习"}
-              </span>
+                  }
+                  return (
+                    <button
+                      key={cell.date}
+                      type="button"
+                      aria-label={`${dateLabel(cell.date)}，答了 ${cell.answers} 轮`}
+                      aria-pressed={selected === cell.date}
+                      className={`${common} cursor-pointer transition-transform duration-150 hover:scale-125 focus-visible:scale-125 aria-pressed:outline-2 aria-pressed:outline-offset-2 aria-pressed:outline-ink`}
+                      style={style}
+                      onMouseEnter={(event) => show(cell, event.currentTarget)}
+                      onFocus={(event) => show(cell, event.currentTarget)}
+                      onBlur={() => setHover(null)}
+                      onClick={() =>
+                        setSelected((value) => (value === cell.date ? null : cell.date))
+                      }
+                    />
+                  );
+                }),
+              )}
             </div>
-          )}
-        </div>
+          </div>
+        )}
+
+        {hover && (
+          <div
+            key={hover.cell.date}
+            role="tooltip"
+            className="tip-in pointer-events-none absolute z-10 rounded-md bg-ink px-2.5 py-1.5 text-xs whitespace-nowrap text-paper"
+            style={{ left: hover.x, top: hover.y - 36 }}
+          >
+            {dateLabel(hover.cell.date)}
+            <span className="ml-1.5 text-paper/70">
+              {hover.cell.answers ? `答了 ${hover.cell.answers} 轮` : "没有练习"}
+            </span>
+          </div>
+        )}
       </div>
 
       <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-faint">
@@ -224,7 +287,7 @@ export function PracticeCalendar() {
         <span className="flex items-center gap-1" aria-hidden="true">
           少
           {levelClass.map((name) => (
-            <span key={name} className={`size-[11px] rounded-[2px] ${name}`} />
+            <span key={name} className={`size-3 rounded-[3px] ${name}`} />
           ))}
           多
         </span>

@@ -39,11 +39,23 @@ export function levelOf(answers: number): CalendarCell["level"] {
   return 4;
 }
 
-export function buildCalendar(days: PracticeDay[], today: string, weeks = 53): Calendar {
+/** 最多往前翻多少周：接口只给最近一年（371 天）的数据。 */
+export const HISTORY_WEEKS = 53;
+
+/**
+ * 画 weeks 列，最后一列是今天往前 offset 周所在的那一周。
+ * offset 为 0 时最后一列含今天；屏幕窄时 weeks 小、格子大，靠 offset 往前翻。
+ */
+export function buildCalendar(
+  days: PracticeDay[],
+  today: string,
+  weeks = HISTORY_WEEKS,
+  offset = 0,
+): Calendar {
   const byDate = new Map(days.map((day) => [day.date, day]));
   const todayMs = toUtc(today);
   const weekday = (new Date(todayMs).getUTCDay() + 6) % 7; // 周一 = 0
-  const start = todayMs - (weekday + (weeks - 1) * 7) * DAY_MS;
+  const start = todayMs - (weekday + (weeks - 1 + offset) * 7) * DAY_MS;
   const columns: CalendarCell[][] = [];
   const months: Calendar["months"] = [];
   let lastMonth = -1;
@@ -106,4 +118,14 @@ export function practiceStats(days: PracticeDay[], today: string): PracticeStats
     activeDays: dates.size,
     monthSessions: sessions.size,
   };
+}
+
+/** 往前翻的最大偏移：最早一列不早于一年前。 */
+export function maxOffset(weeks: number): number {
+  return Math.max(0, HISTORY_WEEKS - weeks);
+}
+
+/** 按可用宽度算能放几周：格子约 22px、间距 4px，至少 8 周，最多一年。 */
+export function weeksFor(width: number, labelWidth = 28): number {
+  return Math.min(HISTORY_WEEKS, Math.max(8, Math.floor((width - labelWidth + 4) / 26)));
 }

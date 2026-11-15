@@ -3,7 +3,9 @@ import {
   buildCalendar,
   levelOf,
   localToday,
+  maxOffset,
   practiceStats,
+  weeksFor,
   type PracticeDay,
 } from "./practice";
 
@@ -62,6 +64,24 @@ describe("buildCalendar", () => {
     expect(calendar.months.at(-1)).toEqual({ column: 51, label: "11月" });
     // 第一列是 2025-11-24，下一列就是 12 月，第一个 11 月不标
     expect(buildCalendar([], "2026-11-26").months[0]).toEqual({ column: 1, label: "12月" });
+  });
+});
+
+describe("buildCalendar 翻页和宽度", () => {
+  it("offset 往前翻整周，最后一列是若干周以前", () => {
+    const page = buildCalendar([], "2026-11-15", 12, 12);
+    expect(page.weeks).toHaveLength(12);
+    expect(page.weeks.at(-1)![0]!.date).toBe("2026-08-17");
+    expect(page.weeks.at(-1)!.every((cell) => !cell.future)).toBe(true);
+  });
+
+  it("按宽度算周数：手机约 12 周，电脑约 30 周，太窄也至少 8 周", () => {
+    expect(weeksFor(343)).toBe(12);
+    expect(weeksFor(832)).toBe(31);
+    expect(weeksFor(120)).toBe(8);
+    expect(weeksFor(5000)).toBe(53);
+    expect(maxOffset(12)).toBe(41);
+    expect(maxOffset(53)).toBe(0);
   });
 });
 
