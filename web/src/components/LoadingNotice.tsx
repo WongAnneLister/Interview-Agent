@@ -1,7 +1,10 @@
 "use client";
+
 import { useEffect, useState } from "react";
+
 export function LoadingNotice({ message }: { message: string }) {
   const [seconds, setSeconds] = useState(0);
+
   useEffect(() => {
     const start = Date.now();
     const timer = window.setInterval(
@@ -10,21 +13,20 @@ export function LoadingNotice({ message }: { message: string }) {
     );
     return () => window.clearInterval(timer);
   }, []);
+
+  const text = message.replace(/[…。]+$/, "");
   return (
     <div
       role="status"
       aria-busy="true"
-      className="flex items-center gap-4 rounded-xl bg-[#e9f3ed] p-[18px]"
+      className="flex items-baseline justify-between gap-4 border-l-2 border-accent pl-4"
     >
-      <span
-        className="size-5 shrink-0 animate-spin rounded-full border-2 border-[#b6d5c7] border-t-accent motion-reduce:animate-none"
-        aria-hidden="true"
-      />
-      <span>
-        {message}
-        <br />
-        <span className="text-muted">已等待 {seconds} 秒</span>
-      </span>
+      <p className="text-ink-soft">
+        {text}
+        <span className="ml-0.5 motion-safe:animate-pulse">…</span>
+        <span className="mt-0.5 block text-xs text-muted">请不要关闭或刷新页面</span>
+      </p>
+      <span className="shrink-0 font-serif text-muted">{seconds} 秒</span>
     </div>
   );
 }

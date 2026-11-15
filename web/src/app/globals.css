@@ -1,25 +1,117 @@
 @import "tailwindcss";
 
 @theme {
-  --color-ink: #172f35;
-  --color-muted: #586b6d;
+  /* 纸面：米白纸、墨色正文、一个深绿强调色；状态色也取偏旧的砖红和赭黄，不用亮色 */
+  --color-paper: #f6f3ec;
+  --color-sheet: #fcfbf7;
+  --color-wash: #efeadf;
+  --color-line: #ddd6c8;
+  --color-line-soft: #e9e3d7;
+  --color-ink: #1f2a2a;
+  --color-ink-soft: #3b4545;
+  --color-muted: #69685d;
+  --color-faint: #9a978a;
   --color-accent: #0b665a;
-  --color-border: #dce5df;
-  --color-background: #f5f7f2;
-  --font-sans: Arial, "PingFang SC", "Microsoft YaHei", sans-serif;
+  --color-accent-ink: #084c43;
+  --color-accent-wash: #e3ede8;
+  --color-accent-line: #b8d2c8;
+  --color-danger: #9e2f22;
+  --color-danger-ink: #74221a;
+  --color-danger-wash: #f5e5e0;
+  --color-danger-line: #e2bfb5;
+  --color-warn: #8a5a12;
+  --color-warn-ink: #66420c;
+  --color-warn-wash: #f4ead6;
+  --color-warn-line: #e3cfa6;
+  --color-background: var(--color-paper);
+  --color-border: var(--color-line);
+  --font-sans: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Segoe UI", sans-serif;
+  --font-serif: "Songti SC", "STSong", "Noto Serif SC", "Source Han Serif SC", Georgia, serif;
 }
 
 body {
   margin: 0;
-  background: var(--color-background);
+  background-color: var(--color-background);
   color: var(--color-ink);
   font-family: var(--font-sans);
   font-size: 15px;
-  line-height: 1.7;
+  line-height: 1.65;
   overflow-wrap: anywhere;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 :focus-visible {
-  outline: 3px solid #ae792b;
-  outline-offset: 3px;
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+/* 标题用宋体：不放进 @layer，压过各页面写的粗细和字距 */
+h1,
+h2 {
+  font-family: var(--font-serif);
+  font-weight: 600;
+  letter-spacing: 0;
+}
+
+::selection {
+  background: var(--color-accent-wash);
+  color: var(--color-accent-ink);
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-line);
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-faint);
+}
+
+@keyframes pulse-ring {
+  0% {
+    transform: scale(0.95);
+    opacity: 0.8;
+  }
+  50% {
+    transform: scale(1.12);
+    opacity: 0.4;
+  }
+  100% {
+    transform: scale(0.95);
+    opacity: 0.8;
+  }
+}
+
+.animate-pulse-ring {
+  animation: pulse-ring 2.5s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+@keyframes sound-wave {
+  0%, 100% {
+    height: 6px;
+  }
+  50% {
+    height: 24px;
+  }
+}
+
+.animate-sound-wave-1 {
+  animation: sound-wave 1.1s ease-in-out infinite;
+}
+.animate-sound-wave-2 {
+  animation: sound-wave 0.8s ease-in-out 0.2s infinite;
+}
+.animate-sound-wave-3 {
+  animation: sound-wave 1.3s ease-in-out 0.4s infinite;
+}
+.animate-sound-wave-4 {
+  animation: sound-wave 0.9s ease-in-out 0.1s infinite;
 }

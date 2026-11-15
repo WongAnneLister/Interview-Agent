@@ -1,12 +1,13 @@
+// 纸面风格的通用样式：平面、细线、小圆角；主按钮用墨色，强调色留给选中和进度
 const buttonBase =
-  "inline-flex max-w-full cursor-pointer items-center justify-center gap-2 rounded-[9px] border px-[18px] py-[9px] text-center text-sm leading-normal font-semibold hover:brightness-[0.93] disabled:hover:brightness-100 disabled:cursor-not-allowed disabled:opacity-45";
+  "inline-flex max-w-full cursor-pointer items-center justify-center gap-2 rounded-md px-4 py-2 text-center text-sm font-medium transition-colors duration-150 disabled:cursor-not-allowed disabled:opacity-45 disabled:pointer-events-none";
 
-export const buttonPrimary = `${buttonBase} border-accent bg-accent text-white`;
-export const buttonSecondary = `${buttonBase} border-[#cbd8d1] bg-white text-ink`;
-export const buttonDanger = `${buttonBase} border-[#e8c7c0] bg-white text-[#a43025]`;
+export const buttonPrimary = `${buttonBase} bg-ink text-paper hover:bg-ink-soft`;
+export const buttonSecondary = `${buttonBase} border border-line bg-transparent text-ink hover:bg-wash`;
+export const buttonDanger = `${buttonBase} border border-danger-line bg-transparent text-danger hover:bg-danger-wash`;
 
-export const panel = "rounded-2xl border border-border bg-white p-5 sm:p-7";
+export const panel = "rounded-lg border border-line bg-sheet p-6 sm:p-8";
 export const field =
-  "flex min-w-0 flex-col gap-1.5 [&>span]:text-sm [&>span]:font-semibold";
+  "flex min-w-0 flex-col gap-1.5 [&>span]:text-xs [&>span]:text-muted";
 export const input =
-  "w-full min-w-0 rounded-lg border border-[#bdcec6] bg-white px-3 py-2.5 text-ink disabled:bg-[#f5f7f4] aria-invalid:border-[#b64032]";
+  "w-full min-w-0 rounded-md border border-line bg-sheet px-3 py-2 text-sm text-ink placeholder:text-faint focus:border-accent focus:outline-hidden transition-colors disabled:bg-wash disabled:text-faint aria-invalid:border-danger";
