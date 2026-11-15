@@ -47,11 +47,19 @@ _EN_FALLBACK: Mapping[str, str] = {
     "closing": "Thank you for your time today. Your report will be ready shortly. Goodbye.",
 }
 _EN_DEFAULT_FALLBACK = "Could you tell me a bit more about that?"
-# 追问、换说法之后模型没把问题问出来时补的一句（C44 实测只说了 “Let's clarify that.”）
-_FOLLOW_UP_FALLBACK: Mapping[Language, str] = {
-    Language.EN: _EN_DEFAULT_FALLBACK,
-    Language.ZH: "能再具体说说吗？",
+# 模型说完没提问时，让它接着补一句问题（C44：只说了 “Let's clarify that.” 就停下）
+_ASK_NOW: Mapping[Language, str] = {
+    Language.ZH: (
+        "你刚才的话没有提问，候选人不知道该说什么。接着只说一句以问号结尾的问题，不要重复刚才的话。"
+    ),
+    Language.EN: (
+        "You did not ask a question, so the candidate does not know what to answer. "
+        "Continue with exactly one question ending with a question mark. "
+        "Do not repeat what you just said. Reply in English only."
+    ),
 }
+# 这些指令说完不需要候选人回答
+_NO_QUESTION_KINDS = frozenset({"closing", "pause"})
 _QUESTION_END = re.compile(r"[?？][\s”’」』）)]*$")
 
 _PHASE_LABELS: Mapping[Phase, str] = {
@@ -172,18 +180,45 @@ def ends_with_question(text: str) -> bool:
     return bool(_QUESTION_END.search(text.strip()))
 
 
-def appended_question(directive: Directive, language: Language = Language.ZH) -> str | None:
-    """模型的话没以问句结尾时，由代码接在后面念出的问题。
+def appended_kind(directive: Directive) -> str:
+    return (directive.repeat_of if directive.kind == "repeat" else None) or directive.kind
+
+
+def needs_question(directive: Directive) -> bool:
+    """这条指令说完要不要把话轮交回候选人（以问句结尾）。"""
+    kind = directive.repeat_of if directive.kind == "repeat" else directive.kind
+    return (kind or directive.kind) not in _NO_QUESTION_KINDS
+
+
+def last_question(history: Sequence[HistoryTurn]) -> str | None:
+    """面试官最近一次真正问出口的问题（最后一句问句）。"""
+    for turn in reversed(history):
+        if turn.role != TurnRole.INTERVIEWER:
+            continue
+        for sentence in reversed(_split_sentences(turn.text)):
+            if ends_with_question(sentence):
+                return sentence
+    return None
+
+
+def _split_sentences(text: str) -> list[str]:
+    splitter = SentenceSplitter()
+    return [*splitter.feed(text), *splitter.flush()]
+
+
+def appended_question(directive: Directive, history: Sequence[HistoryTurn] = ()) -> str | None:
+    """模型（含补问一次）仍没以问句结尾时，由代码接在后面念出的问题。
 
     提问（含重复、解释）补题目原文，保证题目一定被问出来（C22）；
-    追问补一句通用的“能再具体说说吗”，免得只说了半句过渡就停下（C44）。
+    其他要交回话轮的指令补面试官上一次真正问过的问题，没有就补当前题目（C45：
+    原来补一句通用的 “Could you tell me a bit more about that?”，候选人请求重复时答非所问）。
     """
     kind = directive.repeat_of if directive.kind == "repeat" else directive.kind
     if kind == "ask":
         return directive.question_text or None
-    if kind == "follow_up":
-        return _FOLLOW_UP_FALLBACK[language]
-    return None
+    if not needs_question(directive):
+        return None
+    return last_question(history) or directive.question_text or None
 
 
 def _task_text(directive: Directive) -> str:
@@ -342,8 +377,11 @@ class Utterance:
         kind: str,
         language: Language,
         fallback: str | None = None,
+        must_ask: bool = False,
     ) -> None:
         self._llm = llm
+        self._must_ask = must_ask
+        self._language = language
         self._messages = list(messages)
         self._english = language == Language.EN
         self._fallback = fallback
@@ -436,6 +474,11 @@ class Utterance:
                 self._wrong_language("fallback")
                 self._keep(self._fallback, started)
                 yield self._fallback
+            if self._must_ask and self._parts and not ends_with_question(self.text):
+                # 前面的话已经在播，这里补问一句；还没问出来的由调用方补上一次的问题
+                log.info("interviewer_asked_again", kind=self._kind)
+                async for sentence in self._ask_now(span, started):
+                    yield sentence
         except (asyncio.CancelledError, GeneratorExit):
             self._cancelled = True
             raise
@@ -459,6 +502,23 @@ class Utterance:
                 first_sentence_ms=self._first_sentence_ms,
                 cancelled=self._cancelled,
             )
+
+    async def _ask_now(self, span: OpenSpan, started: float) -> AsyncGenerator[str, None]:
+        messages = [
+            *self._messages,
+            ChatMessage(role="assistant", content=self.text),
+            ChatMessage(role="user", content=_ASK_NOW[self._language]),
+        ]
+        with span.activate():
+            stream = self._llm.stream_chat(messages, max_tokens=100, temperature=0.7, extra=None)
+        async with stream, contextlib.aclosing(self._sentences_of(stream, span)) as found:
+            async for sentence in found:
+                if self._english and is_mostly_chinese(sentence):
+                    continue
+                self._keep(sentence, started)
+                yield sentence
+                if ends_with_question(sentence):
+                    return
 
     async def _sentences_of(self, stream: LLMStream, span: OpenSpan) -> AsyncGenerator[str, None]:
         splitter = SentenceSplitter()
@@ -494,6 +554,9 @@ def _is_opening(directive: Directive) -> bool:
 
 def speak(llm: LLMProvider, data: InterviewerInput, *, interview_id: uuid.UUID) -> Utterance:
     task = _task_text(data.directive)
+    if needs_question(data.directive) and appended_kind(data.directive) != "ask":
+        # C45：追问、重复、接话常常只说一句过渡就停下
+        task += "\n最后一句必须是以问号结尾的问句，让候选人知道要回答什么。"
     if data.candidate_name and _is_opening(data.directive):
         task = f"{task}\n候选人称呼：{data.candidate_name}"
     if data.transition_spoken:
@@ -520,4 +583,6 @@ def speak(llm: LLMProvider, data: InterviewerInput, *, interview_id: uuid.UUID) 
         kind=data.directive.kind,
         language=data.language,
         fallback=english_fallback(data.directive) if data.language == Language.EN else None,
+        # 提问由代码补题目原文（appended_question），不用再让模型补问
+        must_ask=needs_question(data.directive) and appended_kind(data.directive) != "ask",
     )

@@ -29,6 +29,18 @@ class MachineConfig:
     overtime_grace_ms: int = 30_000
     # 整场剩余不足这么久就不再开新题，直接收尾（challenges C21：冗长候选人在最后 18 秒被问了新题）
     min_new_question_ms: int = 120_000
+    # 没有题目的阶段里最多接几轮话就进入下一阶段（C45：开场答了“准备好了”还在寒暄，
+    # 原来要等阶段时间用完）。开场：候选人回应后直接进入自我介绍；
+    # 自我介绍：介绍完最多再接一句；其他阶段（候选人提问）仍按时间
+    opening_exchanges: int = 0
+    self_intro_exchanges: int = 1
+
+    def exchanges_for(self, phase: Phase) -> int | None:
+        if phase is Phase.OPENING:
+            return self.opening_exchanges
+        if phase is Phase.SELF_INTRO:
+            return self.self_intro_exchanges
+        return None
 
 
 DEFAULT = MachineConfig()
@@ -360,9 +372,11 @@ def _decision(
                 return Step(state=new_state, directive=directive)
             return _next_question_or_stage(plan, current, "follow_up_limit", config)
         return _next_question_or_stage(plan, current, "plan", config)
-    if event.action == "follow_up":
+    limit = config.exchanges_for(current.phase)
+    if event.action == "follow_up" and (limit is None or current.follow_ups < limit):
         directive = _directive("converse", current.phase)
-        new_state = _update(current, last_directive=directive)
+        # 没有题目的阶段借 follow_ups 数接了几轮话，进入下一阶段时清零
+        new_state = _update(current, follow_ups=current.follow_ups + 1, last_directive=directive)
         return Step(state=new_state, directive=directive)
     return _enter(plan, current, _next_phase(plan, current.phase), "plan", current.phase, config)
 

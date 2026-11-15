@@ -6,6 +6,7 @@ import asyncio
 import json
 import random
 import uuid
+from collections.abc import Sequence
 from typing import Any
 
 import pytest
@@ -35,6 +36,7 @@ from interview.domain.interviewer import (
 from interview.domain.state_machine import Directive, DirectiveKind, Phase, Reason
 from interview.observability import usage
 from interview.prompts.loader import DATA_NOTICE, get_prompt_library
+from interview.providers.base import ChatMessage
 from interview.providers.fake import FakeLLM
 from interview.providers.observed import CallContext
 from interview.providers.registry import ProviderFactories, ProviderRegistry
@@ -484,11 +486,46 @@ def test_appended_question_by_kind() -> None:
     assert appended_question(directive("ask", Phase.TECHNICAL, question_text=question)) == question
     repeat = directive("repeat", Phase.TECHNICAL, repeat_of="ask", question_text=question)
     assert appended_question(repeat) == question
-    follow = directive("follow_up", Phase.TECHNICAL, question_text=question, focus="失败重试")
-    assert appended_question(follow) == "能再具体说说吗？"
-    assert appended_question(follow, Language.EN) == "Could you tell me a bit more about that?"
     assert appended_question(directive("ask", Phase.TECHNICAL, question_text=None)) is None
     assert appended_question(directive("closing", Phase.CLOSING)) is None
+    # C45：追问、重复追问补面试官上一次真正问过的问题，不再补通用的“能再具体说说吗”
+    history = [
+        HistoryTurn(role=TurnRole.INTERVIEWER, text="好的。能举一个线上故障的例子吗？"),
+        HistoryTurn(role=TurnRole.CANDIDATE, text="能慢一点再说一遍吗"),
+    ]
+    follow_repeat = directive(
+        "repeat", Phase.TECHNICAL, repeat_of="follow_up", question_text=question
+    )
+    assert appended_question(follow_repeat, history) == "能举一个线上故障的例子吗？"
+    follow = directive("follow_up", Phase.TECHNICAL, question_text=question, focus="失败重试")
+    assert appended_question(follow) == question  # 没有问过别的问题时补当前题目
+
+
+async def test_line_without_a_question_gets_one_more_ask() -> None:
+    # C44：追问只说了 “Let's clarify that.” 就停下，候选人只能说 “Hey.”
+    def reply(messages: Sequence[ChatMessage]) -> str:
+        return (
+            "你遇到过最难查的问题是什么？"
+            if messages[-1]["role"] == "user" and "没有提问" in (messages[-1]["content"])
+            else "我们换个角度。"
+        )
+
+    llm = FakeLLM(reply=reply)
+    follow = directive("follow_up", Phase.TECHNICAL, question_text="Q", focus="举例")
+    utterance = speak(llm, make_input(follow), interview_id=INTERVIEW_ID)
+    sentences = [sentence async for sentence in utterance]
+    assert sentences == ["我们换个角度。", "你遇到过最难查的问题是什么？"]
+    assert len(llm.calls) == 2
+    assert llm.calls[1]["messages"][-2] == {"role": "assistant", "content": "我们换个角度。"}
+
+
+async def test_closing_and_ask_are_not_asked_again() -> None:
+    for value in (directive("closing", Phase.CLOSING), ASK):
+        llm = FakeLLM(reply="谢谢你。")
+        _ = [
+            sentence async for sentence in speak(llm, make_input(value), interview_id=INTERVIEW_ID)
+        ]
+        assert len(llm.calls) == 1
 
 
 def test_clarify_explains_before_asking_again() -> None:

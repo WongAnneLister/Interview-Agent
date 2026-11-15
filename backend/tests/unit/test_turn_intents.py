@@ -33,6 +33,9 @@ from interview.domain.turn_intents import (
         "不好意思没听懂",
         "Sorry?",
         "Sorry.",
+        "ah sorry?",
+        "What?",
+        "啊？什么？",
     ],
 )
 def test_repeat_requests(text: str) -> None:
@@ -135,6 +138,9 @@ def test_empty_keyword_group_is_rejected(tmp_path: Path) -> None:
         "没懂你的意思",
         "指的是哪个项目？",
         "能举个例子吗",
+        "About what?",
+        "Which project?",
+        "什么方面？",
     ],
 )
 def test_clarify_requests(text: str) -> None:
@@ -148,6 +154,8 @@ def test_clarify_requests(text: str) -> None:
         "I don't know.",
         "我不懂",
         "这个我不会",
+        "what we did was add a cache",
+        "Which one do you prefer, Redis or Kafka? I chose Kafka.",
         "Sorry, I am not sure what the root cause was, but we rolled back the release "
         "and then added an alert on the queue depth so it would not happen again.",
     ],

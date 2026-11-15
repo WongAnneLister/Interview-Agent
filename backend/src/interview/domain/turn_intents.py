@@ -32,11 +32,13 @@ _REPEAT_ZH = re.compile(
     r"|没(有)?听(清|清楚|懂|到|明白)"
     r"|(题目|问题)是(什么|啥)"
     r"|刚才(问|说)的是(什么|啥)"
+    r"|^\W*(啊|嗯)?\W*(什么|啥)\W*$"  # 只说一句“啊？什么？”
 )
 _REPEAT_EN = re.compile(
     r"\b(say|ask|read) (it|that|the question) again\b"
     r"|\bsay again\b"
-    r"|^\W*(sorry|pardon)\W*$"  # 只说一句 “Sorry?” 是没听清（C44 实测）
+    # 只说一句 “Sorry?” / “ah sorry?” / “What?” 是没听清（C44、C45 实测）
+    r"|^\W*((ah|uh|um|er|oh|hmm)\W+)?(sorry|pardon|what|huh)\W*$"
     r"|\b(can|could|would) you (please )?repeat\b"
     r"|\bplease repeat\b|\brepeat (that|it|the question|please)\b"
     r"|\bcome again\b|\bpardon\b|\bone more time\b"
@@ -67,6 +69,7 @@ _CLARIFY_ZH = re.compile(
     r"|没(太)?(懂|明白|理解)(你|您)?(的意思|说的|问的|题目|这个问题)"
     r"|不(太)?(明白|理解)(你|您)?(的意思|说的|问的|题目|这个问题)"
     r"|能(不能)?(解释|举个例子)|举个例子(吗|呢)?$"
+    r"|^\W*(关于|指)?(什么|哪个|哪)(方面|项目|部分)\W*$"
     # 单说“我不懂 / 不会”是在说不会答，交给评估（给提示或换题），不算反问
 )
 _CLARIFY_EN = re.compile(
@@ -74,7 +77,8 @@ _CLARIFY_EN = re.compile(
     r"|^\W*what('?s| is| are) (the|a|an|that|this)\b"
     r"|\b(can|could) you (please )?(explain|clarify|elaborate|give (me )?an example)\b"
     r"|\bi (do ?n[o']?t|don't) (understand|get it|get the question|follow)\b"
-    r"|\bnot sure what you mean\b|\bwhat are you asking\b",
+    r"|\bnot sure what you mean\b|\bwhat are you asking\b"
+    r"|^\W*(about|of) what\W*$|^\W*which (one|part|project)\W*$",  # “About what?”（C45）
     re.IGNORECASE,
 )
 

@@ -424,6 +424,25 @@ def test_decision_follow_up_in_non_question_phase_converses() -> None:
     assert result.state.last_directive == result.directive
 
 
+def test_self_intro_converses_once_then_advances() -> None:
+    # C45：没有题目的阶段原来一直接话，要等阶段时间用完才往下走
+    state = state_at(PLAN, Phase.SELF_INTRO)
+    first = step(PLAN, state, Decision(now_ms=state.clock_ms, action="follow_up"))
+    assert first.directive is not None and first.directive.kind == "converse"
+    second = step(PLAN, first.state, Decision(now_ms=state.clock_ms, action="follow_up"))
+    assert second.state.phase is Phase.RESUME_DEEP_DIVE
+    assert second.state.follow_ups == 0
+    assert second.directive is not None and second.directive.kind == "ask"
+
+
+def test_opening_reply_goes_straight_to_self_intro() -> None:
+    # C45：答了“准备好了”还在寒暄，候选人只好问 “Why don't you ask me some question?”
+    state = state_at(PLAN, Phase.OPENING)
+    result = step(PLAN, state, Decision(now_ms=state.clock_ms, action="follow_up"))
+    assert result.state.phase is Phase.SELF_INTRO
+    assert result.directive is not None and result.directive.kind == "stage_prompt"
+
+
 def test_decision_next_question_in_non_question_phase_advances() -> None:
     state = state_at(PLAN, Phase.SELF_INTRO)
     result = step(PLAN, state, Decision(now_ms=state.clock_ms, action="next_question"))

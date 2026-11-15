@@ -91,7 +91,7 @@ class Speech:
                 yield InterviewerDelta(text=sentence)
                 yield InterviewerSentence(text=sentence)
             self.text = utterance.text
-            question = appended_question(self._directive, self._language)
+            question = appended_question(self._directive, self._history)
             if (
                 question
                 and not ends_with_question(self.text)
