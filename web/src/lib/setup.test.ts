@@ -85,7 +85,7 @@ it("在请求前拒绝非 PDF 和超大文件", () => {
   ).toContain("10 MB");
 });
 
-it("已保存简历显示姓名、职位、文件名和修改日期", () => {
+it("已保存简历第一行是文件名，第二行是姓名、职位和修改日期", () => {
   const saved = {
     id: "r1",
     name: "Alex Chen",
@@ -95,11 +95,11 @@ it("已保存简历显示姓名、职位、文件名和修改日期", () => {
     updated_at: "2026-11-14T09:30:00Z",
   };
   expect(savedResumeLabel(saved)).toEqual({
-    title: "Alex Chen",
-    detail: "Backend Engineer · Northwind Labs · alex.pdf · 2026-11-14 更新",
+    title: "alex.pdf",
+    detail: "Alex Chen · Backend Engineer · Northwind Labs · 2026-11-14 更新",
+    named: true,
   });
   expect(
     savedResumeLabel({ ...saved, name: " ", headline: "", file_name: null }),
-  ).toEqual({ title: "未注明姓名的简历", detail: "2026-11-14 更新" });
-  expect(savedResumeLabel({ ...saved, name: "" }).title).toBe("alex.pdf");
+  ).toEqual({ title: "未记录文件名", detail: "2026-11-14 更新", named: false });
 });

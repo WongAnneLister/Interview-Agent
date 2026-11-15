@@ -59,7 +59,9 @@ export default function ResumeStep(props: Props) {
                   className="group flex w-full min-w-0 cursor-pointer items-center gap-4 py-4 text-left disabled:cursor-not-allowed"
                 >
                   <span className="min-w-0 flex-1">
-                    <span className="block truncate font-serif text-lg text-ink group-hover:text-accent-ink">
+                    <span
+                      className={`block truncate group-hover:text-accent-ink ${label.named ? "text-ink" : "text-faint"}`}
+                    >
                       {label.title}
                     </span>
                     <span className="block truncate text-sm text-muted">

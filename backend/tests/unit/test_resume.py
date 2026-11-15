@@ -687,3 +687,24 @@ async def test_backfill_fills_hashes_from_stored_originals() -> None:
     assert hashes == {"kept.pdf": hashlib.sha256(RESUME_PDF).hexdigest(), "gone.pdf": None}
     assert await backfill(sessionmaker, store, bucket="resumes", user_id=USER) == (0, 1)
     await engine.dispose()
+
+
+async def test_reupload_fills_in_a_missing_file_name(
+    api: tuple[httpx.AsyncClient, MemoryObjectStore, SettingsHolder],
+) -> None:
+    # 加文件名之前上传的旧简历：重传同一文件时补上文件名，仍然不重新解析
+    client, _store, holder = api
+    first = (await client.post("/api/resumes", files=_upload(RESUME_PDF, "old.pdf"))).json()
+    assert holder.sessionmaker is not None
+    async with holder.sessionmaker() as session:
+        saved = await ResumeRepository(session, USER).get(uuid.UUID(first["id"]))
+        assert saved is not None
+        saved.file_name = None
+        await session.commit()
+
+    again = (await client.post("/api/resumes", files=_upload(RESUME_PDF, "我的简历.pdf"))).json()
+    assert (again["reused"], again["file_name"]) == (True, "我的简历.pdf")
+    renamed = (await client.post("/api/resumes", files=_upload(RESUME_PDF, "other.pdf"))).json()
+    assert renamed["file_name"] == "我的简历.pdf"  # 已有文件名就不改
+    assert len(holder.llm.calls) == 1
+    assert (await client.get("/api/resumes")).json()[0]["file_name"] == "我的简历.pdf"

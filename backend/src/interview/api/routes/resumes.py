@@ -123,10 +123,20 @@ async def _recent(
     return [row for row in rows if isinstance(row.parsed_json, dict)]
 
 
-async def _saved_copy(resources: Resources, user_id: uuid.UUID, digest: str) -> ResumeOut | None:
+async def _saved_copy(
+    resources: Resources, user_id: uuid.UUID, digest: str, file_name: str | None
+) -> ResumeOut | None:
     async with resources.sessionmaker() as session:
         found = await _recent(session, user_id, Resume.file_sha256 == digest)
-        return _view(found[0], reused=True) if found else None
+        if not found:
+            return None
+        resume = found[0]
+        # 加文件名之前上传的简历没有文件名：重传同一文件时补上，列表里就能认出来
+        if resume.file_name is None and file_name is not None:
+            resume.file_name = file_name
+            await session.commit()
+            await session.refresh(resume)
+        return _view(resume, reused=True)
 
 
 async def _owned(session: DbSession, user_id: uuid.UUID, resume_id: uuid.UUID) -> Resume:
@@ -177,7 +187,7 @@ async def create_resume(
             await file.close()
         check_resume_file(data)
         digest = hashlib.sha256(data).hexdigest()
-        saved = await _saved_copy(resources, user_id, digest)
+        saved = await _saved_copy(resources, user_id, digest, _file_name(file))
         if saved is not None:
             log.info("resume_reused", resume_id=str(saved.id))
             return saved
