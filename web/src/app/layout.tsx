@@ -21,12 +21,20 @@ export default function RootLayout({
             >
               面试练习室
             </Link>
-            <Link
-              href="/new"
-              className="text-sm text-muted underline-offset-4 hover:text-ink hover:underline"
-            >
-              新的练习
-            </Link>
+            <nav className="flex items-baseline gap-5 text-sm">
+              <Link
+                href="/questions"
+                className="text-muted underline-offset-4 hover:text-ink hover:underline"
+              >
+                历史面试题
+              </Link>
+              <Link
+                href="/new"
+                className="text-muted underline-offset-4 hover:text-ink hover:underline"
+              >
+                新的练习
+              </Link>
+            </nav>
           </div>
         </header>
 

@@ -102,6 +102,11 @@ export function createInterview(
     client.POST("/api/interviews", { body, signal: combined }),
   );
 }
+export function listHistoryQuestions(signal?: AbortSignal) {
+  return request(TIMEOUT_MS.standard, signal, (combined) =>
+    client.GET("/api/questions", { signal: combined }),
+  );
+}
 export function getPlan(id: string, signal?: AbortSignal) {
   return request(TIMEOUT_MS.standard, signal, (combined) =>
     client.GET("/api/interviews/{interview_id}/plan", {

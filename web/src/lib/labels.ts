@@ -35,3 +35,12 @@ export const turnRoleLabels = {
   interviewer: "面试官",
   candidate: "候选人",
 } satisfies Record<Schemas["TurnRole"], string>;
+
+export const interviewStatusLabels = {
+  draft: "草稿",
+  planned: "还没开始",
+  in_progress: "进行中",
+  completed: "已面完",
+  aborted: "提前结束",
+  failed: "出错",
+} satisfies Record<Schemas["InterviewStatus"], string>;
