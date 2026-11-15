@@ -1,6 +1,6 @@
 "use client";
 
-import { buttonPrimary, buttonSecondary, panel } from "@/lib/styles";
+import { buttonPrimary, buttonSecondary } from "@/lib/styles";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ErrorNotice } from "@/components/ErrorNotice";
@@ -39,13 +39,20 @@ import { useRequest } from "@/lib/useRequest";
 
 type Activity = "pick" | "upload" | "save" | "preview" | "create";
 type ResumeOut = components["schemas"]["ResumeOut"];
-const steps = ["简历", "职位描述", "面试设置", "生成计划"];
+
+const stepItems = [
+  { id: 0, title: "简历", desc: "上传或选择简历" },
+  { id: 1, title: "职位", desc: "解析目标岗位" },
+  { id: 2, title: "设置", desc: "风格与时长设定" },
+  { id: 3, title: "生成计划", desc: "出题与时间分配" },
+];
+
 const loadingMessages: Record<Activity, string> = {
-  pick: "正在读取已保存的简历",
-  upload: "正在解析简历（通常需要 10–30 秒）",
-  save: "正在保存简历修改",
-  preview: "正在解析职位描述，请稍候",
-  create: "正在生成面试计划（通常需要 30–90 秒，请不要关闭页面）",
+  pick: "正在读取简历",
+  upload: "正在解析简历，通常 10–30 秒",
+  save: "正在保存修改",
+  preview: "正在解析职位描述",
+  create: "正在生成面试计划，通常 30–90 秒",
 };
 
 function friendlyError(
@@ -64,7 +71,7 @@ function friendlyError(
   };
   const message =
     error.code === "parse_failed" && activity === "upload"
-      ? "简历解析失败，可重试。"
+      ? "简历解析失败，请检查文件或重试。"
       : (messages[error.code] ??
         (error.status === 413 ? messages.file_too_large : undefined));
   return message
@@ -97,7 +104,6 @@ export default function NewInterviewPage() {
   const locked = request.busy || navigating;
   const state = { resumeId, resumeDirty, jdText, previewText };
 
-  // 列表只是捷径：加载失败就当没有，照常上传
   function refreshSaved(signal?: AbortSignal) {
     listResumes(signal).then(setSaved, () => undefined);
   }
@@ -152,7 +158,7 @@ export default function NewInterviewPage() {
           applyResume(
             result,
             result.reused
-              ? "这份文件之前上传过，已直接使用保存的解析结果，没有重新解析。"
+              ? "这份文件之前上传过，已直接使用保存的解析结果，没有重新计费。"
               : null,
           );
           refreshSaved();
@@ -174,7 +180,6 @@ export default function NewInterviewPage() {
       );
     } else if (next === "preview") {
       if (!jdText.trim() || [...jdText].length > 10000) return;
-      // Associate the response with the submitted text, even if the input later changes.
       const submittedText = jdText;
       setActivity(next);
       void request.run(
@@ -202,48 +207,61 @@ export default function NewInterviewPage() {
   }
 
   return (
-    <div className="flex min-w-0 flex-col gap-4" aria-busy={locked}>
-      <header className="flex min-w-0 flex-col gap-4">
-        <p className="text-xs font-bold tracking-[0.12em] text-accent">
-          开始一场有针对性的练习
-        </p>
-        <h1 className="text-[clamp(28px,4vw,38px)] leading-[1.35] font-bold tracking-[-0.04em]">
-          准备模拟面试
+    <div className="flex min-w-0 flex-col gap-8" aria-busy={locked}>
+      <header className="flex flex-col gap-3">
+        <h1 className="text-[32px] leading-tight text-ink sm:text-[38px]">
+          准备一场面试
         </h1>
-        <p className="text-muted">确认简历和岗位要求，生成属于你的面试计划。</p>
+        <p className="text-muted">
+          选好简历，贴上职位描述，定下时长和风格，系统会据此出一份面试计划。
+        </p>
       </header>
+
       <nav aria-label="面试准备步骤">
-        <ol className="grid grid-cols-4 gap-1 sm:gap-2">
-          {steps.map((title, index) => (
-            <li key={title}>
-              <button
-                className="cursor-pointer rounded-[10px] border border-border bg-white px-1 py-3 text-xs text-muted aria-[current=step]:border-accent aria-[current=step]:bg-accent aria-[current=step]:text-white disabled:cursor-not-allowed disabled:opacity-45 sm:px-2 sm:py-3.5 sm:text-[15px]"
-                type="button"
-                aria-current={step === index ? "step" : undefined}
-                disabled={
-                  locked ||
-                  index > furthestStep ||
-                  (index > 0 && !canAdvance(index - 1, state))
-                }
-                onClick={() => goTo(index)}
-              >
-                <span>{index + 1}</span> {title}
-              </button>
-            </li>
-          ))}
+        <ol className="flex flex-wrap gap-x-6 border-b border-line">
+          {stepItems.map((item, index) => {
+            const isCurrent = step === index;
+            const isDisabled =
+              locked ||
+              index > furthestStep ||
+              (index > 0 && !canAdvance(index - 1, state));
+            return (
+              <li key={item.id} className="shrink-0">
+                <button
+                  type="button"
+                  aria-current={isCurrent ? "step" : undefined}
+                  disabled={isDisabled}
+                  onClick={() => goTo(index)}
+                  className="-mb-px cursor-pointer border-b-2 border-transparent pb-3 text-sm text-muted transition-colors hover:text-ink aria-[current=step]:border-accent aria-[current=step]:text-ink disabled:cursor-not-allowed disabled:text-faint disabled:hover:text-faint"
+                >
+                  <span className="mr-1.5 font-serif text-faint">{index + 1}</span>
+                  {item.title}
+                </button>
+              </li>
+            );
+          })}
         </ol>
       </nav>
-      <section className={`${panel} flex min-w-0 flex-col gap-4`}>
+
+      <section className="flex min-w-0 flex-col gap-6">
         {request.busy && activity && (
           <LoadingNotice message={loadingMessages[activity]} />
         )}
-        {navigating && <p role="status">计划已生成，正在打开预览…</p>}
+        {navigating && (
+          <div className="flex items-center gap-3 rounded-lg bg-accent-wash border border-accent-line p-4 text-sm text-accent-ink" role="status">
+            <span className="size-2 rounded-full bg-accent animate-ping" />
+            面试计划已生成完毕，正在前往预览与调整页面…
+          </div>
+        )}
         <ErrorNotice
           error={friendlyError(request.error, activity)}
           onRetry={activity ? () => perform(activity) : undefined}
         />
+
         <fieldset disabled={locked} className="flex min-w-0 flex-col gap-4">
-          <legend className="sr-only">{steps[step]}</legend>
+          <legend className="sr-only">{stepItems[step]?.title ?? "步骤"}</legend>
+
+          {/* 步骤 1: 简历 */}
           {step === 0 && (
             <ResumeStep
               saved={saved}
@@ -269,6 +287,8 @@ export default function NewInterviewPage() {
               }}
             />
           )}
+
+          {/* 步骤 2: 职位描述 */}
           {step === 1 && (
             <JdStep
               text={jdText}
@@ -284,6 +304,8 @@ export default function NewInterviewPage() {
               onNext={() => goTo(2)}
             />
           )}
+
+          {/* 步骤 3: 面试设置 */}
           {step === 2 && (
             <SettingsStep
               value={settings}
@@ -292,58 +314,49 @@ export default function NewInterviewPage() {
               onNext={() => goTo(3)}
             />
           )}
+
+          {/* 步骤 4: 确认与生成 */}
           {step === 3 && (
             <section
-              className="flex min-w-0 flex-col gap-4"
+              className="flex min-w-0 flex-col gap-6"
               aria-labelledby="generate-title"
             >
-              <h2 className="text-[21px] font-[650]" id="generate-title">
-                生成面试计划
-              </h2>
-              <p className="text-muted">
-                确认以下信息。生成后可以预览与修改题目，再开始练习。
-              </p>
-              <dl className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                <div>
-                  <dt className="text-[13px] text-muted">候选人</dt>
-                  <dd className="font-semibold">{resume?.name || "未注明"}</dd>
-                </div>
-                <div>
-                  <dt className="text-[13px] text-muted">目标岗位</dt>
-                  <dd className="font-semibold">
-                    {preview?.title || "未注明"}
-                  </dd>
-                </div>
-                <div>
-                  <dt className="text-[13px] text-muted">面试类型</dt>
-                  <dd className="font-semibold">{typeLabels[settings.type]}</dd>
-                </div>
-                <div>
-                  <dt className="text-[13px] text-muted">面试风格</dt>
-                  <dd className="font-semibold">
-                    {styleLabels[settings.style]}
-                  </dd>
-                </div>
-                <div>
-                  <dt className="text-[13px] text-muted">面试语言</dt>
-                  <dd className="font-semibold">
-                    {languageLabels[settings.language]}
-                  </dd>
-                </div>
-                <div>
-                  <dt className="text-[13px] text-muted">面试时长</dt>
-                  <dd className="font-semibold">
-                    {durationLabels[settings.duration_min]}
-                  </dd>
-                </div>
+              <div>
+                <h2 className="text-2xl text-ink" id="generate-title">
+                  确认后生成计划
+                </h2>
+                <p className="mt-1 text-sm text-muted">
+                  生成后可以先看题目、增删修改，确认了再开始面试。
+                </p>
+              </div>
+
+              <dl className="grid grid-cols-1 border-t border-line sm:grid-cols-2 sm:gap-x-10">
+                {[
+                  ["候选人", resume?.name || "未注明"],
+                  ["目标岗位", preview?.title || "未注明"],
+                  ["面试类型", typeLabels[settings.type]],
+                  ["面试官风格", styleLabels[settings.style]],
+                  ["语言", languageLabels[settings.language]],
+                  ["时长", durationLabels[settings.duration_min]],
+                ].map(([label, value]) => (
+                  <div
+                    key={label}
+                    className="flex items-baseline justify-between gap-4 border-b border-line py-3"
+                  >
+                    <dt className="shrink-0 text-sm text-muted">{label}</dt>
+                    <dd className="min-w-0 truncate text-right text-ink">{value}</dd>
+                  </div>
+                ))}
               </dl>
-              <div className="flex flex-wrap items-center gap-3">
+
+              {/* 底部按钮 */}
+              <div className="flex flex-wrap items-center justify-between gap-3">
                 <button
                   type="button"
                   className={buttonSecondary}
                   onClick={() => goTo(2)}
                 >
-                  上一步：面试设置
+                  上一步
                 </button>
                 <button
                   type="button"

@@ -1,15 +1,16 @@
 "use client";
 
-import { buttonPrimary, buttonSecondary, field, input } from "@/lib/styles";
+import { buttonPrimary, buttonSecondary } from "@/lib/styles";
 import {
   savedResumeLabel,
   type ResumeDraft,
   type SavedResume,
 } from "@/lib/setup";
 import ResumeEditor from "./ResumeEditor";
+import { useRef, useState } from "react";
 
 type Props = {
-  saved: SavedResume[] | null; // 还没加载或加载失败时为 null，不显示列表
+  saved: SavedResume[] | null;
   selectedId: string | null;
   notice: string | null;
   onPick: (id: string) => void;
@@ -27,93 +28,126 @@ type Props = {
 };
 
 export default function ResumeStep(props: Props) {
+  const fileInput = useRef<HTMLInputElement>(null);
+  const [dragging, setDragging] = useState(false);
+  const hasSaved = Boolean(props.saved && props.saved.length > 0);
+
   return (
-    <section
-      className="flex min-w-0 flex-col gap-4"
-      aria-labelledby="resume-title"
-    >
-      <h2 className="text-[21px] font-[650]" id="resume-title">
-        上传与确认简历
-      </h2>
-      {props.saved && props.saved.length > 0 && (
-        <div className="flex min-w-0 flex-col gap-2">
-          <h3 className="font-semibold">选用已保存的简历</h3>
-          <p className="text-sm text-muted">
-            直接使用之前的解析结果，不用等待，也不再花解析费用。
-          </p>
-          <ul className="flex min-w-0 flex-col gap-2">
-            {props.saved.map((resume) => {
-              const label = savedResumeLabel(resume);
-              return (
-                <li key={resume.id}>
-                  <button
-                    type="button"
-                    className="w-full min-w-0 cursor-pointer rounded-[10px] border border-border bg-white px-4 py-3 text-left aria-pressed:border-accent aria-pressed:bg-accent/5 disabled:cursor-not-allowed disabled:opacity-60"
-                    aria-pressed={resume.id === props.selectedId}
-                    onClick={() => props.onPick(resume.id)}
-                  >
-                    <span className="block font-semibold">{label.title}</span>
+    <section className="flex min-w-0 flex-col gap-8" aria-labelledby="resume-title">
+      <div>
+        <h2 className="text-2xl text-ink" id="resume-title">
+          用哪份简历
+        </h2>
+        <p className="mt-1 text-sm text-muted">
+          {hasSaved
+            ? "选一份之前保存的，或者上传新的 PDF。"
+            : "上传可以选中文字的 PDF，最大 10 MB，解析后可以逐项修改。"}
+        </p>
+      </div>
+
+      {hasSaved && (
+        <ul className="border-t border-line">
+          {props.saved?.map((resume) => {
+            const label = savedResumeLabel(resume);
+            const selected = resume.id === props.selectedId;
+            return (
+              <li key={resume.id} className="border-b border-line">
+                <button
+                  type="button"
+                  aria-pressed={selected}
+                  onClick={() => props.onPick(resume.id)}
+                  className="group flex w-full min-w-0 cursor-pointer items-center gap-4 py-4 text-left disabled:cursor-not-allowed"
+                >
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate font-serif text-lg text-ink group-hover:text-accent-ink">
+                      {label.title}
+                    </span>
                     <span className="block truncate text-sm text-muted">
                       {label.detail}
                     </span>
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
-          <hr className="border-border" />
-          <h3 className="font-semibold">或上传新简历</h3>
-        </div>
+                  </span>
+                  <span
+                    className={`shrink-0 text-sm ${selected ? "text-accent" : "text-faint group-hover:text-ink"}`}
+                  >
+                    {selected ? "已选" : "使用"}
+                  </span>
+                </button>
+              </li>
+            );
+          })}
+        </ul>
       )}
-      <p className="text-muted">
-        上传可选中文字的 PDF，最大 10 MB。解析后可逐项修正。
-      </p>
-      <label className={field}>
-        <span>PDF 简历</span>
+
+      <div className="flex flex-col gap-3">
+        {hasSaved && <p className="text-sm text-muted">或者上传新的简历</p>}
         <input
-          className={input}
+          ref={fileInput}
           type="file"
           accept="application/pdf"
-          aria-invalid={!!props.fileError}
-          onChange={(event) =>
-            props.onFileChange(event.target.files?.[0] ?? null)
-          }
+          className="sr-only"
+          tabIndex={-1}
+          aria-hidden="true"
+          onChange={(event) => props.onFileChange(event.target.files?.[0] ?? null)}
         />
-      </label>
-      {props.file && <p className="text-muted">已选择：{props.file.name}</p>}
-      {props.fileError && (
-        <p className="text-sm text-[#a32920]" role="alert">
-          {props.fileError}
-        </p>
-      )}
-      <div>
         <button
           type="button"
-          className={buttonPrimary}
-          disabled={!props.file || !!props.fileError}
-          onClick={props.onUpload}
+          onClick={() => fileInput.current?.click()}
+          onDragOver={(event) => {
+            event.preventDefault();
+            setDragging(true);
+          }}
+          onDragLeave={() => setDragging(false)}
+          onDrop={(event) => {
+            event.preventDefault();
+            setDragging(false);
+            props.onFileChange(event.dataTransfer.files[0] ?? null);
+          }}
+          className={`flex w-full cursor-pointer flex-col items-center gap-1 rounded-md border border-dashed px-6 py-8 text-center transition-colors disabled:cursor-not-allowed ${
+            props.fileError
+              ? "border-danger-line bg-danger-wash/40"
+              : dragging
+                ? "border-accent bg-accent-wash/50"
+                : "border-line hover:border-faint hover:bg-wash/60"
+          }`}
         >
-          {props.draft ? "重新上传并解析" : "上传并解析"}
+          <span className="text-ink">
+            {props.file ? props.file.name : "点击选择，或把 PDF 拖到这里"}
+          </span>
+          <span className="text-xs text-muted">
+            {props.file
+              ? `${(props.file.size / (1024 * 1024)).toFixed(2)} MB · 点击换一份`
+              : "需要能选中文字的 PDF，最大 10 MB"}
+          </span>
         </button>
+        {props.fileError && (
+          <p className="text-sm text-danger" role="alert">
+            {props.fileError}
+          </p>
+        )}
+        {props.file && !props.fileError && (
+          <div>
+            <button type="button" className={buttonPrimary} onClick={props.onUpload}>
+              上传并解析
+            </button>
+          </div>
+        )}
       </div>
+
       {props.draft && (
-        <>
-          <hr className="border-border" />
+        <div className="flex flex-col gap-5 border-t border-line pt-8">
+          <div className="flex flex-wrap items-baseline justify-between gap-2">
+            <h2 className="text-2xl text-ink">核对解析结果</h2>
+            <span className={`text-sm ${props.dirty ? "text-warn" : "text-muted"}`}>
+              {props.dirty ? "有修改还没保存" : "已保存"}
+            </span>
+          </div>
           {props.notice && (
-            <p className="text-sm text-accent" role="status">
+            <p className="border-l-2 border-accent pl-3 text-sm text-accent-ink" role="status">
               {props.notice}
             </p>
           )}
-          <p className="text-muted">
-            请确认解析结果。
-            {props.dirty ? "有未保存修改，请先保存。" : "简历已保存。"}
-          </p>
-          <ResumeEditor
-            value={props.draft}
-            errors={props.errors}
-            onChange={props.onChange}
-          />
-          <div className="flex flex-wrap items-center gap-3">
+          <ResumeEditor value={props.draft} errors={props.errors} onChange={props.onChange} />
+          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-line pt-6">
             <button
               className={buttonSecondary}
               type="button"
@@ -128,10 +162,10 @@ export default function ResumeStep(props: Props) {
               disabled={!props.canContinue}
               onClick={props.onNext}
             >
-              下一步：职位描述
+              下一步：职位
             </button>
           </div>
-        </>
+        </div>
       )}
     </section>
   );
