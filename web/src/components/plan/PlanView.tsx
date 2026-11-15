@@ -1,11 +1,13 @@
 "use client";
-import { buttonSecondary, panel } from "@/lib/styles";
+
 import type { components } from "@/lib/api/schema";
 import { stageLabels } from "@/lib/labels";
 import { formatMinutes, groupQuestions } from "@/lib/plan";
 import { QuestionCard } from "./QuestionCard";
+
 type Plan = components["schemas"]["PlanOut"];
 type Question = components["schemas"]["Question"];
+
 export function PlanView({
   plan,
   questions,
@@ -23,116 +25,153 @@ export function PlanView({
   onExpanded: (ids: Set<string>) => void;
   onQuestions: (questions: Question[]) => void;
 }) {
+  const totalSeconds = plan.stages.reduce((sum, slot) => sum + slot.seconds, 0);
+
   return (
-    <div className="flex min-w-0 flex-col gap-7">
-      <section className={`${panel} flex min-w-0 flex-col gap-4`}>
-        <h2 className="text-[21px] font-[650]">阶段时间分配</h2>
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-          {plan.stages.map((slot) => (
+    <div className="flex min-w-0 flex-col gap-12">
+      <section className="flex min-w-0 flex-col gap-4">
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <h2 className="text-2xl text-ink">时间安排</h2>
+          <span className="text-sm text-muted">
+            全场 {formatMinutes(totalSeconds)} 分钟
+          </span>
+        </div>
+        <div className="flex h-2 w-full gap-0.5 overflow-hidden rounded-sm" aria-hidden="true">
+          {plan.stages.map((slot, index) => (
             <div
               key={slot.stage}
-              className="flex min-w-0 flex-col gap-[5px] rounded-lg bg-[#f3f6f0] p-4 text-[13px]"
-            >
-              <span>{stageLabels[slot.stage]}</span>
-              <strong className="text-2xl font-semibold">
-                {formatMinutes(slot.seconds)}{" "}
-                <small className="text-xs font-normal text-muted">分钟</small>
-              </strong>
-            </div>
+              className={index % 2 ? "bg-accent/70" : "bg-accent"}
+              style={{ flexGrow: slot.seconds || 1 }}
+            />
           ))}
         </div>
-        <p className="text-muted">
-          合计{" "}
-          {formatMinutes(
-            plan.stages.reduce((sum, slot) => sum + slot.seconds, 0),
-          )}{" "}
-          分钟；各阶段按半分钟取整展示。
-        </p>
-      </section>
-      <section className={`${panel} flex min-w-0 flex-col gap-4`}>
-        <h2 className="text-[21px] font-[650]">本场能力项</h2>
-        {plan.competencies.length === 0 && (
-          <p className="text-muted">暂无能力项</p>
-        )}
-        <div className="flex flex-wrap gap-3">
-          {plan.competencies.map((item, i) => (
-            <div
-              key={i}
-              className={`flex flex-wrap items-center gap-3 rounded-lg border border-border px-4 py-3 text-sm ${item.covered ? "" : "bg-[#f4f4f2] text-muted"}`}
+        <ol className="grid grid-cols-2 gap-x-8 border-t border-line sm:grid-cols-3">
+          {plan.stages.map((slot) => (
+            <li
+              key={slot.stage}
+              className="flex items-baseline justify-between gap-3 border-b border-line py-2.5"
             >
-              <strong>{item.name}</strong>
-              <span>权重 {Math.round(item.weight * 100)}%</span>
-              {!item.covered && (
-                <span className="inline-block rounded-md bg-[#edf4ee] px-2.5 py-[3px] text-[13px] text-accent">
-                  本场不考察
-                </span>
-              )}
-            </div>
+              <span className="truncate text-sm text-ink-soft">
+                {stageLabels[slot.stage] || slot.stage}
+              </span>
+              <span className="shrink-0 font-serif text-ink">
+                {formatMinutes(slot.seconds)}
+                <span className="ml-0.5 text-xs text-muted">分</span>
+              </span>
+            </li>
           ))}
-        </div>
+        </ol>
       </section>
+
       <section className="flex min-w-0 flex-col gap-4">
-        <div className="flex flex-wrap items-start justify-between gap-4 sm:flex-nowrap">
+        <h2 className="text-2xl text-ink">考察什么</h2>
+        {plan.competencies.length === 0 ? (
+          <p className="text-sm text-muted">这份计划没有列出能力项。</p>
+        ) : (
+          <ul className="border-t border-line">
+            {plan.competencies.map((item, i) => {
+              const pct = Math.round(item.weight * 100);
+              return (
+                <li
+                  key={i}
+                  className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-4 gap-y-1.5 border-b border-line py-3 sm:grid-cols-[minmax(0,1fr)_10rem_3rem]"
+                >
+                  <span className={item.covered ? "text-ink" : "text-faint"}>
+                    {item.name}
+                  </span>
+                  {item.covered ? (
+                    <>
+                      <span className="order-last col-span-2 h-1 overflow-hidden rounded-sm bg-line sm:order-none sm:col-span-1">
+                        <span
+                          className="block h-full bg-accent"
+                          style={{ width: `${pct}%` }}
+                        />
+                      </span>
+                      <span className="text-right font-serif text-ink">{pct}%</span>
+                    </>
+                  ) : (
+                    <span className="text-right text-sm text-faint sm:col-span-2">
+                      本场不考察
+                    </span>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </section>
+
+      <section className="flex min-w-0 flex-col gap-4">
+        <div className="flex flex-wrap items-baseline justify-between gap-3">
           <div>
-            <h2 className="text-[21px] font-[650]">题目预览</h2>
-            <p className="text-muted">
-              题目默认隐藏，避免提前看到影响练习效果。
+            <h2 className="text-2xl text-ink">
+              题目<span className="ml-2 text-base text-muted">{questions.length} 道</span>
+            </h2>
+            <p className="mt-1 text-sm text-muted">
+              题目默认收起，留到面试时再听更接近真实；想先看或修改也可以展开。
             </p>
           </div>
-          <div className="flex flex-wrap items-center gap-3">
+          <div className="flex items-center gap-4 text-sm">
             <button
-              className={buttonSecondary}
+              type="button"
+              className="cursor-pointer text-muted underline-offset-4 hover:text-ink hover:underline"
               onClick={() => onExpanded(new Set(questions.map((q) => q.id)))}
             >
               全部展开
             </button>
             <button
-              className={buttonSecondary}
+              type="button"
+              className="cursor-pointer text-muted underline-offset-4 hover:text-ink hover:underline"
               onClick={() => onExpanded(new Set())}
             >
               全部收起
             </button>
           </div>
         </div>
+
         {questions.length === 0 && (
-          <p className={`${panel} text-muted`}>
-            暂无题目。保存时后端会检查必考能力项是否有题目；可放弃修改恢复。
+          <p className="border-y border-line py-8 text-center text-sm text-muted">
+            题目都删掉了。点下方的“放弃修改”可以恢复原来的题目。
           </p>
         )}
+
         {groupQuestions(questions, plan.stages)
           .filter((group) => group.questions.length)
           .map((group) => (
-            <section key={group.stage} className="flex min-w-0 flex-col gap-4">
-              <h3 className="text-base font-[650] text-accent">
-                {stageLabels[group.stage]}
+            <section key={group.stage} className="mt-2 flex min-w-0 flex-col gap-3">
+              <h3 className="text-sm text-muted">
+                {stageLabels[group.stage] || group.stage}
+                <span className="ml-2 text-faint">{group.questions.length} 道</span>
               </h3>
-              {group.questions.map((question) => (
-                <QuestionCard
-                  key={question.id}
-                  question={question}
-                  number={questions.findIndex((q) => q.id === question.id) + 1}
-                  expanded={expanded.has(question.id)}
-                  readOnly={readOnly}
-                  busy={busy}
-                  onToggle={() => {
-                    const next = new Set(expanded);
-                    if (next.has(question.id)) next.delete(question.id);
-                    else next.add(question.id);
-                    onExpanded(next);
-                  }}
-                  onChange={(updated) =>
-                    onQuestions(
-                      questions.map((q) => (q.id === updated.id ? updated : q)),
-                    )
-                  }
-                  onDelete={() => {
-                    const next = new Set(expanded);
-                    next.delete(question.id);
-                    onExpanded(next);
-                    onQuestions(questions.filter((q) => q.id !== question.id));
-                  }}
-                />
-              ))}
+              <div className="flex flex-col gap-3">
+                {group.questions.map((question) => (
+                  <QuestionCard
+                    key={question.id}
+                    question={question}
+                    number={questions.findIndex((q) => q.id === question.id) + 1}
+                    expanded={expanded.has(question.id)}
+                    readOnly={readOnly}
+                    busy={busy}
+                    onToggle={() => {
+                      const next = new Set(expanded);
+                      if (next.has(question.id)) next.delete(question.id);
+                      else next.add(question.id);
+                      onExpanded(next);
+                    }}
+                    onChange={(updated) =>
+                      onQuestions(
+                        questions.map((q) => (q.id === updated.id ? updated : q)),
+                      )
+                    }
+                    onDelete={() => {
+                      const next = new Set(expanded);
+                      next.delete(question.id);
+                      onExpanded(next);
+                      onQuestions(questions.filter((q) => q.id !== question.id));
+                    }}
+                  />
+                ))}
+              </div>
             </section>
           ))}
       </section>

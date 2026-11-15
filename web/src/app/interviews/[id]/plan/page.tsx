@@ -1,4 +1,5 @@
 "use client";
+
 import { buttonPrimary, buttonSecondary, panel } from "@/lib/styles";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
@@ -11,7 +12,10 @@ import { ApiError } from "@/lib/api/errors";
 import type { components } from "@/lib/api/schema";
 import { toPlanUpdate, validateQuestions } from "@/lib/plan";
 import { useRequest } from "@/lib/useRequest";
+import { IconArrowLeft } from "@/components/icons";
+
 type Plan = components["schemas"]["PlanOut"];
+
 export default function PlanPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
@@ -27,11 +31,13 @@ export default function PlanPage() {
   const dirty = Boolean(
     plan && JSON.stringify(plan.questions) !== JSON.stringify(questions),
   );
+
   function accept(value: Plan) {
     setServer({ id, plan: value });
     setQuestions(value.questions);
     setValidation([]);
   }
+
   useEffect(() => {
     void run(
       (signal) => getPlan(id, signal),
@@ -43,6 +49,7 @@ export default function PlanPage() {
     );
     return cancel;
   }, [id, run, cancel]);
+
   useEffect(() => {
     if (!dirty || readOnly) return;
     const warn = (event: BeforeUnloadEvent) => {
@@ -52,9 +59,11 @@ export default function PlanPage() {
     window.addEventListener("beforeunload", warn);
     return () => window.removeEventListener("beforeunload", warn);
   }, [dirty, readOnly]);
+
   function load() {
     void run((signal) => getPlan(id, signal), accept);
   }
+
   function save() {
     const issues = validateQuestions(questions);
     setValidation(issues);
@@ -82,9 +91,10 @@ export default function PlanPage() {
       },
     );
   }
+
   const shownError =
     error?.status === 404
-      ? new ApiError("面试不存在", 404, error.code, error.traceId)
+      ? new ApiError("面试不存在，请确认链接是否有效", 404, error.code, error.traceId)
       : error?.status === 409
         ? new ApiError(
             "面试已开始，计划不能修改",
@@ -93,17 +103,18 @@ export default function PlanPage() {
             error.traceId,
           )
         : error;
+
   return (
-    <div className="flex min-w-0 flex-col gap-7">
-      <div className="flex min-w-0 flex-col gap-2.5">
-        <span className="text-xs font-bold tracking-[0.12em] text-accent">
-          准备就绪 · 计划预览
-        </span>
-        <h1 className="text-[clamp(28px,4vw,38px)] leading-[1.35] font-bold tracking-[-0.04em]">
-          这一场，练什么？
+    <div className="flex min-w-0 flex-col gap-10">
+      <header className="flex flex-col gap-3">
+        <h1 className="text-[32px] leading-tight text-ink sm:text-[38px]">
+          这一场练什么
         </h1>
-        <p className="text-muted">先了解节奏，再带着真实的反应进入面试。</p>
-      </div>
+        <p className="text-muted">
+          先看看时间怎么分、考哪些能力。可以直接开始，也可以先改改题目。
+        </p>
+      </header>
+
       <ErrorNotice
         error={shownError}
         onRetry={
@@ -114,21 +125,26 @@ export default function PlanPage() {
             : undefined
         }
       />
+
       {busy && (
-        <LoadingNotice message={plan ? "正在保存计划" : "正在加载面试计划"} />
+        <LoadingNotice message={plan ? "正在保存计划修改…" : "正在加载面试计划…"} />
       )}
+
       {!plan && !busy && !error && (
-        <p className={`${panel} text-muted`} role="status">
-          正在准备计划预览…
-        </p>
+        <div className={`${panel} text-center py-12 text-faint`} role="status">
+          正在加载面试计划中，请稍候…
+        </div>
       )}
+
       {error?.status === 404 && (
         <div>
           <Link className={buttonSecondary} href="/new">
+            <IconArrowLeft className="size-4" />
             返回准备页
           </Link>
         </div>
       )}
+
       {plan && (
         <>
           <PlanView
@@ -144,35 +160,48 @@ export default function PlanPage() {
               setValidation([]);
             }}
           />
-          <section className={`${panel} flex min-w-0 flex-col gap-4`}>
-            <h2 className="text-[21px] font-[650]">准备好开始了吗？</h2>
+
+          {/* 启动与保存底栏 */}
+          <section className="flex min-w-0 flex-col gap-5 border-t-2 border-ink pt-6">
+            <h2 className="text-2xl text-ink">开始面试</h2>
+            <p className="-mt-3 text-sm text-muted">
+              语音更接近真实面试，文字适合不方便说话的时候。两种结束后都有带原话依据的报告。
+            </p>
+
             {readOnly && (
-              <p role="status">面试已开始，计划不能修改。当前为只读预览。</p>
+              <p className="border-l-2 border-line pl-3 text-sm text-muted" role="status">
+                这场面试已经开始，计划不能再改。
+              </p>
             )}
+
             {dirty && !readOnly && (
-              <p role="status">
-                有未保存修改，请先保存或放弃修改，再开始面试。
+              <p className="border-l-2 border-warn pl-3 text-sm text-warn-ink" role="status">
+                题目有修改还没保存。先保存或放弃修改，再开始面试。
               </p>
             )}
+
             {saved && !dirty && (
-              <p role="status" className="text-accent">
-                计划已保存
+              <p className="border-l-2 border-accent pl-3 text-sm text-accent-ink" role="status">
+                修改已保存。
               </p>
             )}
+
             {validation.length > 0 && (
-              <ul
-                role="alert"
-                className="list-disc pl-[22px] text-sm text-[#a32920]"
-              >
-                {validation.map((message) => (
-                  <li key={message}>{message}</li>
-                ))}
-              </ul>
+              <div role="alert" className="border-l-2 border-danger pl-3">
+                <p className="text-sm text-danger-ink">这些地方要改一下才能保存：</p>
+                <ul className="mt-1 list-disc space-y-1 pl-5 text-sm text-danger">
+                  {validation.map((message) => (
+                    <li key={message}>{message}</li>
+                  ))}
+                </ul>
+              </div>
             )}
-            <div className="flex flex-wrap items-center gap-3">
-              {!readOnly && (
-                <>
+
+            <div className="flex flex-wrap items-center justify-between gap-4 pt-2">
+              {!readOnly ? (
+                <div className="flex flex-wrap items-center gap-2.5">
                   <button
+                    type="button"
                     className={buttonSecondary}
                     disabled={!dirty || busy}
                     onClick={save}
@@ -180,7 +209,8 @@ export default function PlanPage() {
                     保存修改
                   </button>
                   <button
-                    className={buttonSecondary}
+                    type="button"
+                    className="cursor-pointer px-2 text-sm text-muted underline-offset-4 hover:text-ink hover:underline disabled:cursor-not-allowed disabled:opacity-45 disabled:no-underline"
                     disabled={!dirty || busy}
                     onClick={() => {
                       setQuestions(plan.questions);
@@ -191,22 +221,27 @@ export default function PlanPage() {
                   >
                     放弃修改
                   </button>
-                </>
-              )}
-              <button
-                className={buttonPrimary}
-                disabled={(dirty && !readOnly) || busy}
-                onClick={() => router.push(`/interviews/${id}/text`)}
-              >
-                开始文字面试
-              </button>
-              <button
-                className={buttonPrimary}
-                disabled={(dirty && !readOnly) || busy}
-                onClick={() => router.push(`/interviews/${id}/voice`)}
-              >
-                开始语音面试
-              </button>
+                </div>
+              ) : <div />}
+
+              <div className="flex flex-wrap items-center gap-3">
+                <button
+                  type="button"
+                  className={buttonSecondary}
+                  disabled={(dirty && !readOnly) || busy}
+                  onClick={() => router.push(`/interviews/${id}/text`)}
+                >
+                  文字面试
+                </button>
+                <button
+                  type="button"
+                  className={buttonPrimary}
+                  disabled={(dirty && !readOnly) || busy}
+                  onClick={() => router.push(`/interviews/${id}/voice`)}
+                >
+                  开始语音面试
+                </button>
+              </div>
             </div>
           </section>
         </>
