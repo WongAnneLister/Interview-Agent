@@ -5,7 +5,7 @@
 BACKEND := backend
 UV := uv run --directory $(BACKEND)
 
-.PHONY: help install fmt lint typecheck test check test-live hooks api worker obs-smoke migrate migration seed test-db cost backfill-resume-hashes hotwords benchmark recordings prompts-lock eval eval-quick \
+.PHONY: help install fmt lint typecheck test check test-live hooks api worker obs-smoke migrate migration seed test-db cost backfill-resume-hashes backfill-job-titles hotwords benchmark recordings prompts-lock eval eval-quick \
 	vps-deploy vps-env vps-ps vps-logs obs-up obs-down tunnel check-env fetch-livekit livekit \
 	web-lint web-typecheck web-test web-build web-dev web-check web-deps gen-types
 
@@ -30,6 +30,7 @@ help:
 	@echo "test-db    数据库集成测试：建临时库、跑迁移和测试、结束后删除（需要隧道）"
 	@echo "cost       一场面试的成本拆解：make cost id=<面试ID>（需要隧道）"
 	@echo "backfill-resume-hashes  给旧简历补文件指纹，列表去重（需要隧道，一次性）"
+	@echo "backfill-job-titles      给旧面试补岗位名，历史面试题按岗位分组（需要隧道，一次性，会调用模型）"
 	@echo "hotwords   从文本文件创建百炼热词表并打印 id：make hotwords file=words.txt prefix=xxx"
 	@echo "benchmark  厂商实测（识别、合成、大模型），报告写入 docs/benchmarks/（会产生少量费用）"
 	@echo "recordings 把实测原始录音（data/raw/）转成 16 kHz 单声道 wav（data/asr/），已有的跳过"
@@ -129,6 +130,10 @@ cost:
 backfill-resume-hashes:
 	# 一次性：给加指纹之前上传的简历补上原件 SHA-256，列表里同一文件只显示一份
 	$(UV) python tools/backfill_resume_hashes.py
+
+backfill-job-titles:
+	# 一次性：给保存岗位名之前的面试重新解析 JD 补上岗位名（每场一次便宜模型调用）
+	$(UV) python tools/backfill_job_titles.py
 
 hotwords:
 	@test -n "$(file)" -a -n "$(prefix)" || { echo "用法：make hotwords file=words.txt prefix=xxx"; exit 1; }

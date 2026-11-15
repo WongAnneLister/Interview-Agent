@@ -108,6 +108,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/questions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Questions */
+        get: operations["list_questions_api_questions_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/resumes": {
         parameters: {
             query?: never;
@@ -275,6 +292,25 @@ export interface components {
         HTTPValidationError: {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
+        };
+        /** HistoryQuestion */
+        HistoryQuestion: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Interview Id
+             * Format: uuid
+             */
+            interview_id: string;
+            interview_type: components["schemas"]["InterviewType"];
+            /** Job Title */
+            job_title: string;
+            language: components["schemas"]["Language"];
+            question: components["schemas"]["Question"];
+            status: components["schemas"]["InterviewStatus"];
         };
         /** InterviewCreate */
         InterviewCreate: {
@@ -1128,6 +1164,38 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["JDParsed"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_questions_api_questions_get: {
+        parameters: {
+            query?: {
+                /** @description 最多取最近多少场面试的题目 */
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HistoryQuestion"][];
                 };
             };
             /** @description Validation Error */

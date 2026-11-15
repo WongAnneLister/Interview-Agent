@@ -251,6 +251,47 @@
         "title": "HTTPValidationError",
         "type": "object"
       },
+      "HistoryQuestion": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "interview_id": {
+            "format": "uuid",
+            "title": "Interview Id",
+            "type": "string"
+          },
+          "interview_type": {
+            "$ref": "#/components/schemas/InterviewType"
+          },
+          "job_title": {
+            "title": "Job Title",
+            "type": "string"
+          },
+          "language": {
+            "$ref": "#/components/schemas/Language"
+          },
+          "question": {
+            "$ref": "#/components/schemas/Question"
+          },
+          "status": {
+            "$ref": "#/components/schemas/InterviewStatus"
+          }
+        },
+        "required": [
+          "interview_id",
+          "job_title",
+          "interview_type",
+          "language",
+          "status",
+          "created_at",
+          "question"
+        ],
+        "title": "HistoryQuestion",
+        "type": "object"
+      },
       "InterviewCreate": {
         "properties": {
           "duration_min": {
@@ -1942,6 +1983,57 @@
         "summary": "Parse Jd Route",
         "tags": [
           "jd"
+        ]
+      }
+    },
+    "/api/questions": {
+      "get": {
+        "operationId": "list_questions_api_questions_get",
+        "parameters": [
+          {
+            "description": "最多取最近多少场面试的题目",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "description": "最多取最近多少场面试的题目",
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/HistoryQuestion"
+                  },
+                  "title": "Response List Questions Api Questions Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Questions",
+        "tags": [
+          "questions"
         ]
       }
     },

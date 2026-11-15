@@ -365,3 +365,68 @@ async def test_usage_roles_and_interview_id(api: Api, monkeypatch: pytest.Monkey
     assert len(records) == 2
     assert {item["role"] for item in records} == {UsageRole.JD_PARSE, UsageRole.PLAN}
     assert {item["interview_id"] for item in records} == {interview_id}
+
+
+async def test_history_questions_keep_job_title_and_edits(api: Api) -> None:
+    # 历史面试题：每场计划的题目带上岗位名称（解析 JD 得到并存下）和生成时间
+    assert (await api.client.get("/api/questions")).json() == []
+    first = (await api.client.post("/api/interviews", json=CREATE_BODY)).json()
+    second = (await api.client.post("/api/interviews", json=CREATE_BODY)).json()
+    revised = [editable(q) for q in second["plan"]["questions"]]
+    revised[0]["text"] = "改过的题目"
+    assert (
+        await api.client.patch(f"/api/interviews/{second['id']}/plan", json={"questions": revised})
+    ).status_code == 200
+
+    listed = (await api.client.get("/api/questions")).json()
+    assert len(listed) == 10
+    assert {item["job_title"] for item in listed} == {"后端工程师"}
+    by_interview = {item["interview_id"] for item in listed}
+    assert by_interview == {first["id"], second["id"]}
+    newest = [item for item in listed if item["interview_id"] == second["id"]]
+    assert newest[0]["question"]["text"] == "改过的题目"
+    assert (newest[0]["interview_type"], newest[0]["language"], newest[0]["status"]) == (
+        "technical",
+        "zh",
+        "planned",
+    )
+    assert len((await api.client.get("/api/questions?limit=1")).json()) == 5
+
+    api.settings.app.default_user_id = uuid.uuid4()
+    assert (await api.client.get("/api/questions")).json() == []
+
+
+async def test_history_questions_of_old_interviews_have_no_job_title(api: Api) -> None:
+    # JD 第一行多半是公司介绍或 "Job Description"，不拿来当岗位名，留空由前端显示“未注明岗位”
+    created = (await api.client.post("/api/interviews", json=CREATE_BODY)).json()
+    async with api.sessionmaker() as session:
+        interview = await InterviewRepository(session, USER).get(uuid.UUID(created["id"]))
+        assert interview is not None
+        interview.jd_title = None
+        await session.commit()
+    listed = (await api.client.get("/api/questions")).json()
+    assert {item["job_title"] for item in listed} == {""}
+
+
+async def test_backfill_job_titles_reparses_jd_for_old_interviews(api: Api) -> None:
+    from backfill_job_titles import backfill
+
+    created = (await api.client.post("/api/interviews", json=CREATE_BODY)).json()
+    async with api.sessionmaker() as session:
+        interview = await InterviewRepository(session, USER).get(uuid.UUID(created["id"]))
+        assert interview is not None
+        interview.jd_title = None
+        await session.commit()
+    api.settings.providers.llm_live_eval.provider = "fake"
+    api.settings.providers.llm_live_eval.model = "fake-llm"
+    registry = ProviderRegistry(
+        api.settings.providers, factories=ProviderFactories(llm={"fake": lambda _role: api.llm})
+    )
+    calls = len(api.llm.calls)
+
+    assert await backfill(api.sessionmaker, registry, user_id=USER) == (1, 0)
+    assert len(api.llm.calls) == calls + 1
+    listed = (await api.client.get("/api/questions")).json()
+    assert {item["job_title"] for item in listed} == {"后端工程师"}
+    assert await backfill(api.sessionmaker, registry, user_id=USER) == (0, 0)  # 已有的不再调用
+    assert len(api.llm.calls) == calls + 1

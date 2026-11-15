@@ -213,6 +213,8 @@ class Interview(UserOwned, Base):
     # 默认 NO ACTION：被面试引用的简历不能单独删除；删除用户时随用户一起级联删除
     resume_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("resumes.id"), index=True)
     jd_text: Mapped[str] = mapped_column(Text)
+    # 解析 JD 得到的岗位名称，历史面试题按它分组；旧面试和未注明岗位时为空
+    jd_title: Mapped[str | None] = mapped_column(String(200))
     type: Mapped[InterviewType] = mapped_column(_enum(InterviewType, "interview_type"))
     style: Mapped[InterviewStyle] = mapped_column(_enum(InterviewStyle, "interview_style"))
     language: Mapped[Language] = mapped_column(_enum(Language, "language"))

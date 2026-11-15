@@ -144,7 +144,8 @@ async def _run(
         user_id=ec.user_id,
         interview_id=interview_id,
         settings=settings,
-        plan=plan.value,
+        plan=plan.plan.value,
+        job_title=plan.job_title,
     )
     orchestrator = await InterviewOrchestrator.load(
         interview_id=interview_id,

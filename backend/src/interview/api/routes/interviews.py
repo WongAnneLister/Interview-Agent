@@ -303,7 +303,7 @@ async def create_interview(
         duration_min=body.duration_min,
     )
     try:
-        result = await build_plan(
+        built = await build_plan(
             jd_llm=jd_llm,
             plan_llm=plan_llm,
             resume=resume,
@@ -322,15 +322,16 @@ async def create_interview(
         user_id=user_id,
         interview_id=interview_id,
         settings=settings,
-        plan=result.value,
+        plan=built.plan.value,
+        job_title=built.job_title,
     )
     view = _interview_view(interview, row)
     log.info(
         "interview_created",
         interview_id=str(interview_id),
         duration_min=body.duration_min,
-        questions=len(result.value.questions),
-        retries=result.retries,
+        questions=len(built.plan.value.questions),
+        retries=built.plan.retries,
     )
     return view
 

@@ -40,6 +40,12 @@ class InterviewSettings:
     duration_min: int
 
 
+@dataclass(frozen=True)
+class BuiltPlan:
+    plan: StructuredResult[InterviewPlan]
+    job_title: str  # JD 里的岗位名称，未注明时为空
+
+
 async def build_plan(
     *,
     jd_llm: LLMProvider,
@@ -47,10 +53,10 @@ async def build_plan(
     resume: ResumeParsed,
     settings: InterviewSettings,
     interview_id: uuid.UUID,
-) -> StructuredResult[InterviewPlan]:
+) -> BuiltPlan:
     """解析 JD 并生成计划；结构化输出失败时抛 StructuredOutputError，由调用方处理。"""
     jd = (await parse_jd(jd_llm, settings.jd_text, interview_id=interview_id)).value
-    return await generate_plan(
+    plan = await generate_plan(
         plan_llm,
         jd=jd,
         resume=resume,
@@ -60,6 +66,7 @@ async def build_plan(
         duration_min=settings.duration_min,
         interview_id=interview_id,
     )
+    return BuiltPlan(plan=plan, job_title=jd.title.strip())
 
 
 async def persist_interview(
@@ -69,6 +76,7 @@ async def persist_interview(
     interview_id: uuid.UUID,
     settings: InterviewSettings,
     plan: InterviewPlan,
+    job_title: str = "",
 ) -> tuple[Interview, Plan]:
     """在一个事务里写入面试和计划，返回刷新后的两行。"""
     interview = Interview(
@@ -76,6 +84,7 @@ async def persist_interview(
         user_id=user_id,
         resume_id=settings.resume_id,
         jd_text=settings.jd_text,
+        jd_title=job_title[:200] or None,
         type=settings.type,
         style=settings.style,
         language=settings.language,
