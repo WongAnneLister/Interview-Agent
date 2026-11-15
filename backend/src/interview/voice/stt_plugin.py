@@ -13,6 +13,10 @@
   会重新触发轮次判断；0.3 秒就放弃的话，这句话被整段丢掉，面试官一直等（C41 后的实测，C42）。
   实测长回答里 Fun-ASR 一直不断句，finish-task 之后十几秒不返回，判定说完被拖到 6–10 秒，
   超时后整段识别结果被丢弃，候选人说的话等于没说（PR-30 实测）。
+- 段首静音不发：上一段 flush 之后的帧（面试官说话、候选人还没开口）先攒在一个 0.3 秒的
+  预录缓冲里，音量持续 SPEECH_MIN_S 超过 SPEECH_RMS 才开新任务，并带上缓冲免得吞掉第一个字。
+  Fun-ASR 大致按实时速度处理音频，段首十几秒静音会让结果晚同样长的时间；
+  静音也按时长计费（C42）。
 - 事件映射（参照官方 Deepgram 插件）：一句话的第一个 partial 之前发 START_OF_SPEECH，
   partial → INTERIM_TRANSCRIPT，final → FINAL_TRANSCRIPT + END_OF_SPEECH，
   随后发一条 RECOGNITION_USAGE（本句新增的计费时长），基类据此上报 STTMetrics。
@@ -23,10 +27,12 @@
 from __future__ import annotations
 
 import asyncio
+from collections import deque
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any, Never
 
+import numpy as np
 import structlog
 from livekit import rtc
 from livekit.agents import (
@@ -55,6 +61,18 @@ SAMPLE_RATE = 16000
 FLUSH_FINAL_WAIT_S = 0.3
 # flush 时还没有任何文字时的等待上限（秒）。录音重放实测：音频结束后 2.6–6.3 秒才出最终结果（C42）
 FLUSH_EMPTY_WAIT_S = 8.0
+# 段首判定“开口了”：音量（16 bit PCM 的均方根）持续 SPEECH_MIN_S 超过 SPEECH_RMS。
+# 用 2026-11-15 的 12 段录音校准：10 毫秒级的底噪尖峰可达 199，单帧过 200 就开会提前十几秒；
+# 400 且持续 50 毫秒时，每段都在开口后 0–20 毫秒内触发，没有误触发
+SPEECH_RMS = 400
+SPEECH_MIN_S = 0.05
+# 开口前多带的音频（秒），保住第一个字的起音
+PREROLL_S = 0.3
+
+
+def _rms(frame: rtc.AudioFrame) -> float:
+    samples = np.frombuffer(frame.data, dtype=np.int16).astype(np.float32)
+    return float(np.sqrt(np.mean(samples * samples))) if samples.size else 0.0
 
 
 class ProviderSTT(stt.STT[Never]):  # 没有自定义事件
@@ -131,20 +149,34 @@ class _Stream(stt.RecognizeStream):
         self._heard = False  # 当前任务是否已经交出过文字（中间或最终结果）
         self._recorder: SegmentRecorder | None = None
 
-    async def _next_frame(self) -> rtc.AudioFrame | None:
-        """下一段的第一帧；跳过没有音频的 flush，输入结束返回 None。"""
+    async def _next_frame(self) -> list[rtc.AudioFrame] | None:
+        """下一段开头的几帧：开口前的预录缓冲 + 第一帧有声音的帧。
+
+        跳过没有音频的 flush 和段首静音；输入结束返回 None。
+        """
+        frames: deque[rtc.AudioFrame] = deque()
+        buffered = loud = 0.0
         while True:
             try:
                 item = await self._input_ch.recv()
             except utils.aio.ChanClosed:
                 return None
-            if isinstance(item, rtc.AudioFrame):
-                return item
+            if not isinstance(item, rtc.AudioFrame):
+                continue
+            frames.append(item)
+            buffered += item.duration
+            loud = loud + item.duration if _rms(item) >= SPEECH_RMS else 0.0
+            if loud >= SPEECH_MIN_S:
+                return list(frames)
+            # 只留开口前 PREROLL_S（加上正在累计的这段响声）
+            while frames and buffered - frames[0].duration >= PREROLL_S + loud:
+                buffered -= frames.popleft().duration
 
-    async def _segment(self, first: rtc.AudioFrame) -> AsyncIterator[bytes]:
+    async def _segment(self, first: list[rtc.AudioFrame]) -> AsyncIterator[bytes]:
         """一个厂商任务的音频：读到 flush 或输入结束为止。"""
-        self._record(first.data.tobytes())
-        yield first.data.tobytes()
+        for frame in first:
+            self._record(frame.data.tobytes())
+            yield frame.data.tobytes()
         while True:
             try:
                 item = await self._input_ch.recv()
@@ -185,7 +217,7 @@ class _Stream(stt.RecognizeStream):
             self._speaking = False
             self._send(stt.SpeechEventType.END_OF_SPEECH)
 
-    async def _recognize(self, first: rtc.AudioFrame) -> None:
+    async def _recognize(self, first: list[rtc.AudioFrame]) -> None:
         owner = self._owner
         self._billed_s = 0.0
         self._partial = None

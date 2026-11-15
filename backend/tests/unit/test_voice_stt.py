@@ -95,8 +95,9 @@ async def test_audio_is_resampled_to_16k_pcm_and_usage_reported() -> None:
     assert usage[0].audio_duration == pytest.approx(0.3, abs=0.02)
 
 
-async def test_timestamps_are_shifted_by_stream_offset() -> None:
+async def test_timestamps_are_shifted_by_stream_offset(monkeypatch: pytest.MonkeyPatch) -> None:
     # 基类按首帧的采集时刻定锚：一次推入很多帧会被当成更早采集的音频，所以这里只推一帧
+    monkeypatch.setattr(stt_plugin, "SPEECH_MIN_S", 0.0)  # 一帧也算开口
     events = await run(FakeSTT(EVENTS[2:3]), frames=1, offset=2.0)
     final = next(e.alternatives[0] for e in events if e.type == Kind.FINAL_TRANSCRIPT)
     assert final.start_time == pytest.approx(2.0, abs=0.05)
@@ -322,6 +323,7 @@ async def test_flush_without_any_text_still_gives_up_eventually(
 ) -> None:
     # 厂商一直不返回时也不能无限等：到上限就放弃这个任务，下一段音频照常开新任务
     monkeypatch.setattr(stt_plugin, "FLUSH_EMPTY_WAIT_S", 0.2)
+    monkeypatch.setattr(stt_plugin, "SPEECH_MIN_S", 0.0)  # flush 后只推了几帧
     provider = SlowSTT(30)
     stream = ProviderSTT(provider, language=Language.EN).stream(conn_options=FAST)
     for _ in range(5):
@@ -335,3 +337,56 @@ async def test_flush_without_any_text_still_gives_up_eventually(
         await asyncio.sleep(0.05)
     assert len(provider.calls) == 2  # 放弃上一个任务后，新的音频开了新任务
     await stream.aclose()
+
+
+def quiet_frame() -> rtc.AudioFrame:
+    data = (20).to_bytes(2, "little", signed=True) * FRAME_SAMPLES  # 麦克风底噪
+    return rtc.AudioFrame(data, INPUT_RATE, 1, FRAME_SAMPLES)
+
+
+class CountingSTT(FakeSTT):
+    """记下每个任务实际收到多少秒音频。"""
+
+    def __init__(self) -> None:
+        super().__init__(provider="bailian", model="fun-asr-realtime")
+        self.seconds: list[float] = []
+
+    def stream(self, audio: Any, **kwargs: Any) -> Any:
+        self.seconds.append(0.0)
+
+        async def counted() -> AsyncGenerator[bytes]:
+            async for chunk in audio:
+                self.seconds[-1] += len(chunk) / 2 / SAMPLE_RATE
+                yield chunk
+
+        return super().stream(counted(), **kwargs)
+
+
+async def test_leading_silence_is_not_sent() -> None:
+    # C42：Fun-ASR 大致按实时速度处理，段首 2 秒静音会让结果晚 2 秒，还按时长计费
+    provider = CountingSTT()
+    stream = ProviderSTT(provider, language=Language.EN).stream(conn_options=FAST)
+    for _ in range(200):  # 2 秒静音
+        stream.push_frame(quiet_frame())
+    for _ in range(50):  # 0.5 秒说话
+        stream.push_frame(frame())
+    stream.flush()
+    await first_final(stream)
+    await stream.aclose()
+    assert len(provider.seconds) == 1
+    sent = provider.seconds[0]
+    # 说话 0.5 秒 + 预录 PREROLL_S（按帧取整，重采样的帧较大，再放宽 0.1 秒）
+    assert 0.5 <= sent <= 0.5 + stt_plugin.PREROLL_S + 0.1
+
+
+async def test_silence_alone_never_opens_a_task() -> None:
+    provider = CountingSTT()
+    stream = ProviderSTT(provider, language=Language.EN).stream(conn_options=FAST)
+    for _ in range(100):
+        stream.push_frame(quiet_frame())
+    stream.flush()
+    stream.end_input()
+    async with asyncio.timeout(3):
+        async for _ in stream:
+            pass
+    assert provider.seconds == []

@@ -5,6 +5,8 @@
 - 开始任务：发 run-task 等 task-started；此前连接断开或建连失败时换新连接重试一次
   （还没发数据，重试是安全的）。
 - task-finished 后连接可复用（下一个任务用新的 task_id）；task-failed 后服务端会关闭连接。
+- 丢弃连接不等关闭握手：放进后台关，调用方立即返回。服务端还在处理积压的音频时，
+  关闭握手要等满 close_timeout（实测 10 秒），识别插件放弃一个任务后下一段话就被卡住（C42）。
 - 错误映射：握手状态码、task-failed 的 error_code / error_message、超时与断线
   都映射到 ProviderError。
 """
@@ -64,6 +66,7 @@ class DashScopeTaskClient:
         self._url = url
         self._on_connect = on_connect  # 新连接建立后先执行（如等待 session.created）
         self._idle: tuple[ClientConnection, float] | None = None
+        self._closing: set[asyncio.Task[None]] = set()  # 后台关闭中的连接
 
     # ---- 连接 ----
 
@@ -79,15 +82,24 @@ class DashScopeTaskClient:
             await self.discard(conn)
 
     async def discard(self, conn: ClientConnection | None) -> None:
-        if conn is not None:
-            with suppress(Exception):
-                await conn.close()
+        if conn is None or conn.state is State.CLOSED:
+            return
+        task = asyncio.create_task(self._close(conn), name=f"{self.name}_ws_close")
+        self._closing.add(task)
+        task.add_done_callback(self._closing.discard)
+
+    @staticmethod
+    async def _close(conn: ClientConnection) -> None:
+        with suppress(Exception):
+            await conn.close()
 
     async def aclose(self) -> None:
         if self._idle is not None:
             conn, _ = self._idle
             self._idle = None
             await self.discard(conn)
+        if self._closing:
+            await asyncio.gather(*self._closing, return_exceptions=True)
 
     async def acquire(self) -> ClientConnection:
         """取空闲连接（仍可用时），否则新建。"""
