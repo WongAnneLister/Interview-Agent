@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ErrorNotice } from "@/components/ErrorNotice";
 import { LoadingNotice } from "@/components/LoadingNotice";
+import { PracticeCalendar } from "@/components/PracticeCalendar";
 import ResumeStep from "@/components/setup/ResumeStep";
 import JdStep from "@/components/setup/JdStep";
 import SettingsStep from "@/components/setup/SettingsStep";
@@ -216,6 +217,8 @@ export default function NewInterviewPage() {
           选好简历，贴上职位描述，定下时长和风格，系统会据此出一份面试计划。
         </p>
       </header>
+
+      <PracticeCalendar />
 
       <nav aria-label="面试准备步骤">
         <ol className="flex flex-wrap gap-x-6 border-b border-line">
